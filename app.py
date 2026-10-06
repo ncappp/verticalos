@@ -1,7 +1,7 @@
 
 import os, sqlite3, uuid, secrets, subprocess, shutil, hashlib, hmac, json
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, render_template, send_from_directory, g
+from flask import Flask, request, jsonify, send_from_directory, g
 from telegram_auth import validate_init_data, allowed_user, TelegramAuthError
 
 BASE=os.path.dirname(os.path.abspath(__file__))
@@ -11,7 +11,7 @@ UPLOAD=os.getenv("VERTICALOS_UPLOAD_DIR",os.path.join(DATA,"uploads"))
 os.makedirs(DATA,exist_ok=True)
 os.makedirs(UPLOAD,exist_ok=True)
 
-app=Flask(__name__,static_folder="static",template_folder="templates")
+app=Flask(__name__,static_folder=None)
 app.config["MAX_CONTENT_LENGTH"]=1024*1024*1024
 
 def now(): return datetime.now(timezone.utc).isoformat()
@@ -110,7 +110,12 @@ def init_db():
     c.commit(); c.close()
 
 @app.get("/")
-def home(): return render_template("index.html")
+def home(): return send_from_directory(BASE,"index.html")
+
+@app.get("/static/<path:name>")
+def static_files(name):
+    if name not in {"app.css","app.js"}: return jsonify(error="not found"),404
+    return send_from_directory(BASE,name)
 
 @app.get("/uploads/<path:name>")
 def uploads(name): return send_from_directory(UPLOAD,name)

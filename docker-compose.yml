@@ -1,0 +1,11 @@
+services:
+  verticalos:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      VERTICALOS_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: verticalos
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_IDS
+        value: "8784706094"
+      - key: MINI_APP_URL
+        sync: false
+      - key: ALLOW_DEV_AUTH
+        value: "0"

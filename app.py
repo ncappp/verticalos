@@ -1,7 +1,7 @@
 
 import os, sqlite3, uuid, secrets, subprocess, shutil, hashlib, hmac, json
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, send_from_directory, g
+from flask import Flask, request, jsonify, send_from_directory, g, has_request_context
 from telegram_auth import validate_init_data, allowed_user, TelegramAuthError
 
 BASE=os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +16,22 @@ app.config["MAX_CONTENT_LENGTH"]=1024*1024*1024
 
 def now(): return datetime.now(timezone.utc).isoformat()
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, *args):
+        try:return super().__exit__(*args)
+        finally:self.close()
+
+@app.teardown_request
+def close_request_connections(error):
+    for connection in getattr(g,"_db_connections",[]):
+        try:connection.close()
+        except sqlite3.Error:pass
+
 def conn():
-    c=sqlite3.connect(DB,timeout=30)
+    c=sqlite3.connect(DB,timeout=30,factory=ClosingConnection)
+    if has_request_context():
+        if not hasattr(g,"_db_connections"):g._db_connections=[]
+        g._db_connections.append(c)
     c.row_factory=sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.execute("PRAGMA journal_mode=WAL")
@@ -36,6 +50,19 @@ def audit(c,action,entity_type,entity_id,payload=None):
 
 @app.before_request
 def telegram_guard():
+    local_token=os.getenv("FAXCLIP_LOCAL_TOKEN","")
+    if local_token:
+        from urllib.parse import urlparse
+        if request.remote_addr not in ("127.0.0.1","::1") or request.host.split(":")[0] not in ("127.0.0.1","localhost"):
+            return jsonify(error="Local FaxClip accepts only loopback requests"),403
+        origin=request.headers.get("Origin")
+        if origin and urlparse(origin).netloc!=request.host:return jsonify(error="Origin rejected"),403
+        if request.path=="/api/local-session":return None
+        if request.path.startswith("/api/") and not request.path.startswith("/api/bridge/") and request.path!="/api/health":
+            cookie=request.cookies.get("faxclip_local","")
+            if not cookie or not hmac.compare_digest(cookie,local_token):return jsonify(error="Open FaxClip from its Mac launcher"),401
+            g.telegram_user={"id":0,"first_name":"Local owner"};return None
+    if request.path.startswith("/api/bridge/"):return None
     if not request.path.startswith("/api/") or request.path=="/api/health":
         return None
     if request.path.startswith("/api/devices/") and request.headers.get("Authorization","").startswith("Bearer "):
@@ -109,8 +136,19 @@ def init_db():
     if "period_end" not in cols:c.execute("alter table tasks add column period_end TEXT")
     c.commit(); c.close()
 
+@app.post("/api/local-session")
+def local_session():
+    token=os.getenv("FAXCLIP_LOCAL_TOKEN","")
+    value=(request.get_json(silent=True) or {}).get("token","")
+    if not token or not isinstance(value,str) or not hmac.compare_digest(token,value):return jsonify(error="Invalid local session"),401
+    r=jsonify(ok=True);r.set_cookie("faxclip_local",token,httponly=True,samesite="Strict",secure=False,max_age=43200);return r
+
 @app.get("/")
-def home(): return send_from_directory(BASE,"index.html")
+def home():
+    if os.getenv("FAXCLIP_LOCAL_TOKEN"):
+        with open(os.path.join(BASE,"index.html"),encoding="utf8") as f:html=f.read()
+        return html.replace('<script src="https://telegram.org/js/telegram-web-app.js"></script>','')
+    return send_from_directory(BASE,"index.html")
 
 @app.get("/static/<path:name>")
 def static_files(name):
@@ -124,9 +162,9 @@ def uploads(name): return send_from_directory(UPLOAD,name)
 def dashboard():
     c=conn()
     accounts=c.execute("select count(*) n from accounts").fetchone()["n"]
-    devices=c.execute("select count(*) n from devices where status='ONLINE'").fetchone()["n"]
+    devices=c.execute("select count(*) n from devices where status='ONLINE' and datetime(last_seen)>=datetime('now','-2 minutes')").fetchone()["n"]
     clips=c.execute("select count(*) n from clips").fetchone()["n"]
-    pubs=c.execute("select count(*) n from publications where status='PUBLISHED'").fetchone()["n"]
+    pubs=c.execute("select count(*) n from publications where status in ('PUBLISHED','UI_CONFIRMED')").fetchone()["n"]
     m=c.execute("select coalesce(sum(views),0) views,coalesce(sum(likes),0) likes,coalesce(sum(comments),0) comments,coalesce(sum(followers),0) followers from metrics").fetchone()
     t=c.execute("select coalesce(sum(done),0) done,coalesce(sum(target),0) target from tasks").fetchone()
     return jsonify(accounts=accounts,devices=devices,clips=clips,publications=pubs,**dict(m),
@@ -149,7 +187,12 @@ def devices():
         c.commit()
         return jsonify(id=did,device_token=token,warning="Токен показывается один раз. Сохраните его в Device Agent.")
     rows=c.execute("""select d.id,d.name,d.model,d.connection,d.status,d.battery,d.last_seen,d.created_at,count(a.id) accounts from devices d left join accounts a on a.device_id=d.id group by d.id order by d.created_at desc""").fetchall()
-    return jsonify([dict(r) for r in rows])
+    result=[]
+    for row in rows:
+        d=dict(row)
+        if d["status"]=="ONLINE" and (not d["last_seen"] or (datetime.now(timezone.utc)-datetime.fromisoformat(d["last_seen"])).total_seconds()>120):d["status"]="OFFLINE"
+        result.append(d)
+    return jsonify(result)
 
 @app.post("/api/devices/<did>/heartbeat")
 def heartbeat(did):
@@ -201,7 +244,7 @@ def accounts():
         x=request.json or {}; aid=str(uuid.uuid4())
         c.execute("insert into accounts values(?,?,?,?,?,?,?,?)",
             (aid,x.get("platform","TikTok"),x.get("username",""),x.get("niche",""),
-             x.get("audience",""),"CONNECTED",x.get("device_id"),now()))
+             x.get("audience",""),"ADDED",x.get("device_id"),now()))
         c.execute("insert or ignore into activity_plans(id,account_id,updated_at) values(?,?,?)",(str(uuid.uuid4()),aid,now()))
         audit(c,"create","account",aid,{"platform":x.get("platform","TikTok")})
         c.commit(); return jsonify(id=aid)
@@ -337,7 +380,10 @@ def ingest():
 @app.get("/api/health")
 def health():
     c=conn(); c.execute("select 1").fetchone()
-    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now())
+    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",storage="sqlite_local_requires_persistent_disk")
+
+from adb_backend import register_adb
+register_adb(app,conn,now,UPLOAD)
 
 if __name__=="__main__":
     init_db()

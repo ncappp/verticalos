@@ -24,6 +24,6 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int = 86400):
 
 def allowed_user(user):
     raw=os.getenv("TELEGRAM_ALLOWED_USER_IDS","").strip()
-    if not raw:return True
+    if not raw:return False
     allowed={int(x.strip()) for x in raw.split(",") if x.strip()}
     return int(user["id"]) in allowed

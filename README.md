@@ -1,75 +1,18 @@
-# VerticalOS
+# FaxClip — Telegram Mini App + physical Android bridge
 
-Рабочий MVP управляющей панели для вертикального контента.
+## v14
+Upload MP4 and description in **Publications → Upload and publish** in Telegram. Explicit public-post and rights consent are required. The queue dispatches to a Mac USB bridge; APK v14 imports/hash-checks media, sets the exact description, submits once, checks the first public profile tile and reopens its fresh post URL twice. UI reports application-level confirmation, not platform API/public-viewer or binary-transcoded identity proof.
 
-## Запуск локально
+**Publications → Connect Mac** generates a one-use 10-minute pairing code. Redeem it locally in the cloud bridge launcher, not in chat. Device bearer tokens are scoped, stored locally with owner-only permissions, never displayed in the UI. A running job blocks re-pairing. Regenerating a code invalidates the old code; successful re-pairing invalidates old bridge credentials.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
-```
+Supported route: Redmi 23053RN02Y, Android 15, TikTok 44.6.4, @redmaagi. Other platforms/accounts are disabled pending calibration. The Mac must stay on, bridge running, phone USB-authorized and manually unlocked. No account login, unknown security dialogs or unlocking are automated.
 
-Открыть http://localhost:8000
+Server: existing Docker/gunicorn setup; configure Telegram token and explicit allowed-owner IDs locally, HTTPS and durable data storage. ALLOW_DEV_AUTH=0; FAXCLIP_LOCAL_TOKEN must be unset in production. Current render.yaml retains free plan and has no persistent disk: SQLite, uploads and pairing state can be lost on redeploy/restart. This deployment must not be sold as a durable media archive. Pricing/storage plan is not changed without owner approval.
 
-## Docker
+UI/API job idempotency + immutable source-SHA guard, durable pre-submit intent, Android attempt journal and no automatic retries prevent blind reposting. Lease expiry/unknown results stop the device queue with NEEDS_REVIEW. Earlier matched caption URL is captured before publishing and cannot verify a new submission. Do not erase phone journals or private bridge configs to bypass the safeguard.
 
-```bash
-docker compose up --build
-```
+No uiautomator in the gated route because diagnostic XML collection interrupted service state. New job binding is required after service reconnection. Foreground clipboard access is used solely for fresh, strictly validated TikTok URLs; arbitrary clipboard text is not logged.
 
-## Реализовано
+Test status at commit: 33 server/model tests, 127 Android model checks, and isolated browser form tests passed. Physical v13 publication+profile+URL flow was observed on owner phone. Full Telegram queue → v14 → new actual post remains to be tested after deployment.
 
-- Dashboard
-- аккаунты и целевая аудитория
-- устройства и device token
-- activity plans
-- вертикальные clips
-- загрузка файлов
-- базовый 9:16 render через FFmpeg, если FFmpeg установлен
-- публикационная очередь
-- задачи с 0–100% и автоматическим прогрессом после успешной публикации
-- аналитика аккаунтов/площадок
-- Telegram Mini App-ready web UI
-
-## Что подключается следующим слоем
-
-- Telegram WebApp init-data authentication
-- реальный Android Device Agent
-- официальные API площадок
-- фоновые workers/Redis
-- AI clip scoring/transcription
-- субтитры, banner templates, smart face crop
-- production analytics ingestion
-
-Система не содержит обход CAPTCHA, антифрод-защиты, rate limits или других защитных механизмов платформ.
-
-## Telegram Mini App
-
-1. Отзовите любой токен, который когда-либо отправлялся в открытый чат, и создайте новый через BotFather.
-2. Скопируйте `.env.example` в `.env` и заполните секреты только на сервере.
-3. Укажите Telegram user ID владельца в `TELEGRAM_ALLOWED_USER_IDS`.
-4. После получения HTTPS-адреса выполните:
-
-```bash
-TELEGRAM_BOT_TOKEN='...' python configure_bot.py https://your-domain.example
-```
-
-Backend проверяет подпись и срок действия Telegram `initData`. При локальной разработке можно временно установить `ALLOW_DEV_AUTH=1`; в публичном окружении этот режим должен оставаться выключенным.
-
-## Device Agent API (этап 1)
-
-При создании устройства backend один раз возвращает `device_token`. Device Agent передаёт его как `Authorization: Bearer <token>`.
-
-- `POST /api/devices/{device_id}/heartbeat` — статус и заряд.
-- `GET /api/devices/{device_id}/jobs` — получить разрешённые задания.
-- `POST /api/devices/{device_id}/jobs/{job_id}/claim` — забрать задание.
-- `POST /api/devices/{device_id}/jobs/{job_id}/complete` — завершить (`{"ok":true,"result":{"external_id":"..."}}`).
-- `GET /api/health` — состояние backend, БД и FFmpeg.
-
-Токены устройств хранятся только в виде SHA-256 хеша. Данные и загрузки сохраняются в `./data`.
-
-## Ограничение безопасной автоматизации
-
-Device Agent предназначен для разрешённых сценариев публикации. Проект не реализует обход CAPTCHA, антифрода, rate limits, массовые автолайки или автоподписки. Для площадок приоритетны официальные API публикации.
+Device software is delivered as a separate Mac bridge + signed APK kit; Python is an internal bridge component, not the video-upload UI. Owners use Telegram for uploads. Repo does not contain production tokens, runtime databases, videos or signing keys.

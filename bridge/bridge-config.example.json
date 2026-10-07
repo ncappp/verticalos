@@ -1,0 +1,12 @@
+{
+  "server": "https://your-faxclip-domain.example",
+  "work_dir": ".faxclip-bridge",
+  "phones": [
+    {
+      "serial": "ADB_SERIAL_FROM_ADB_DEVICES",
+      "device_id": "FAXCLIP_DEVICE_ID",
+      "device_token": "ENTER_LOCALLY_DO_NOT_SHARE",
+      "mode": "ACCESSIBILITY_PUBLISH"
+    }
+  ]
+}

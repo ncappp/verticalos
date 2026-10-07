@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "platform": "Instagram",
+  "package": "com.instagram.android",
+  "app_version": "RECORD_ON_PHONE",
+  "preflight": [],
+  "account_selector": {
+    "text": "${username}"
+  },
+  "compose": [],
+  "verification": [],
+  "notes": "Template only. Record selectors on the actual phone before enabling."
+}

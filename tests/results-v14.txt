@@ -1,0 +1,39 @@
+test_busy_device_repair_rejected (test_cloud_pairing.CloudPairingTests.test_busy_device_repair_rejected) ... ok
+test_code_is_one_use_and_bridge_scope_only (test_cloud_pairing.CloudPairingTests.test_code_is_one_use_and_bridge_scope_only) ... ok
+test_expired_code_rejected (test_cloud_pairing.CloudPairingTests.test_expired_code_rejected) ... ok
+test_old_code_invalid_after_regeneration (test_cloud_pairing.CloudPairingTests.test_old_code_invalid_after_regeneration) ... ok
+test_owner_auth_required (test_cloud_pairing.CloudPairingTests.test_owner_auth_required) ... ok
+test_wrong_code_rejected (test_cloud_pairing.CloudPairingTests.test_wrong_code_rejected) ... ok
+test_01_auth_required (test_system.ProtocolTests.test_01_auth_required) ... ok
+test_02_heartbeat_and_scope (test_system.ProtocolTests.test_02_heartbeat_and_scope) ... ok
+test_03_queue_idempotency (test_system.ProtocolTests.test_03_queue_idempotency) ... ok
+test_04_claim_and_lease (test_system.ProtocolTests.test_04_claim_and_lease) ... ok
+test_05_no_fake_completion (test_system.ProtocolTests.test_05_no_fake_completion) ... ok
+test_06_completion_once (test_system.ProtocolTests.test_06_completion_once) ... ok
+test_07_expiry_no_repost (test_system.ProtocolTests.test_07_expiry_no_repost) ... ok
+test_08_revoke (test_system.ProtocolTests.test_08_revoke) ... ok
+test_09_media_private (test_system.ProtocolTests.test_09_media_private) ... ok
+test_10_manual_status_disabled (test_system.ProtocolTests.test_10_manual_status_disabled) ... ok
+test_16_prepared_is_not_published (test_system.ProtocolTests.test_16_prepared_is_not_published) ... ok
+test_11_bounds_and_exact_match (test_system.UITests.test_11_bounds_and_exact_match) ... ok
+test_12_duplicate_selector_stops (test_system.UITests.test_12_duplicate_selector_stops) ... ok
+test_13_shell_quoting (test_system.UITests.test_13_shell_quoting) ... ok
+test_14_invalid_serial (test_system.UITests.test_14_invalid_serial) ... ok
+test_15_no_guessed_selector (test_system.UITests.test_15_no_guessed_selector) ... ok
+test_empty_or_control_caption_rejected (test_v14.IntegrationSafetyTests.test_empty_or_control_caption_rejected) ... ok
+test_invalid_upload_rejected (test_v14.IntegrationSafetyTests.test_invalid_upload_rejected) ... ok
+test_local_login_is_loopback_and_origin_scoped (test_v14.IntegrationSafetyTests.test_local_login_is_loopback_and_origin_scoped) ... ok
+test_rights_and_confirmation_are_boolean (test_v14.IntegrationSafetyTests.test_rights_and_confirmation_are_boolean) ... ok
+test_same_media_never_requeued (test_v14.IntegrationSafetyTests.test_same_media_never_requeued) ... ok
+test_uncertainty_pauses_device (test_v14.IntegrationSafetyTests.test_uncertainty_pauses_device) ... ok
+test_upload_caption_roundtrip (test_v14.IntegrationSafetyTests.test_upload_caption_roundtrip) ... ok
+test_wrong_url_is_not_confirmation (test_v14.IntegrationSafetyTests.test_wrong_url_is_not_confirmation) ... ok
+test_hash_mismatch_stops_before_import (test_v14.QueueBridgeModelTests.test_hash_mismatch_stops_before_import) ... ok
+test_non_tiktok_redirect_rejected (test_v14.QueueBridgeModelTests.test_non_tiktok_redirect_rejected) ... ok
+test_upload_queue_bridge_publish_verify_and_save_url (test_v14.QueueBridgeModelTests.test_upload_queue_bridge_publish_verify_and_save_url) ... ok
+
+----------------------------------------------------------------------
+Ran 33 tests in 0.261s
+
+OK
+FaxClip: verified profile post and URL: dac59372-1808-40f4-a866-b63c56973547

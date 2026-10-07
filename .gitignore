@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.faxclip-data/
+.faxclip-cloud/
+.faxclip-bridge/
+data/
+bridge/bridge-config.json
+bridge/cloud-device.json
+*.p12
+*.idsig

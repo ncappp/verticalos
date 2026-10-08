@@ -126,7 +126,7 @@ class Bridge:
             (self.work/(job['id']+'.part')).unlink(missing_ok=True)
             # Phone copy is intentionally retained until publication processing is complete.
     def run(self,once=False):
-        while True:
+        while not getattr(self,'controller_stop',threading.Event()).is_set():
             try:
                 self.heartbeat();job=None
                 for file in sorted(self.work.glob('*-verification.json')):

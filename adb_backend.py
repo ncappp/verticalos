@@ -2,6 +2,7 @@
 import hashlib,hmac,json,os,re,secrets,time,uuid,struct,threading
 from flask import request,jsonify,g,send_from_directory
 from datetime import datetime
+from platform_adapters import ADAPTERS,account_capability
 
 TTL=90
 
@@ -10,12 +11,20 @@ def register_adb(app,conn,now,uploads):
     with conn() as c:c.executescript('''
         CREATE TABLE IF NOT EXISTS ui_jobs(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,publication_id TEXT UNIQUE NOT NULL,account_id TEXT NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL,available REAL NOT NULL,lease_until REAL,lease_hash TEXT,phase TEXT,evidence TEXT,result TEXT,error TEXT,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ui_phone_pairs(code_hash TEXT PRIMARY KEY,device_id TEXT NOT NULL,expires REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS ui_account_media_guard(platform TEXT,username TEXT,sha256 TEXT,publication_id TEXT,PRIMARY KEY(platform,username,sha256));
         CREATE TABLE IF NOT EXISTS ui_media_guard(device_id TEXT,username TEXT,sha256 TEXT,publication_id TEXT,PRIMARY KEY(device_id,username,sha256));
         CREATE TABLE IF NOT EXISTS clip_captions(clip_id TEXT PRIMARY KEY,caption TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS device_capabilities(device_id TEXT PRIMARY KEY,mode TEXT,helper_version INTEGER,app_version TEXT);
         CREATE TABLE IF NOT EXISTS ui_request_hash(key TEXT PRIMARY KEY,body_hash TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ui_idempotency(key TEXT PRIMARY KEY,publication_id TEXT NOT NULL);
     ''')
+    with conn() as c:
+        for old in c.execute('select publication_id,payload from ui_jobs order by created_at').fetchall():
+            try:
+                payload=json.loads(old['payload'])
+                if all(isinstance(payload.get(k),str) and payload.get(k) for k in ('platform','username','sha256')):
+                    c.execute('insert or ignore into ui_account_media_guard values(?,?,?,?)',(payload['platform'],payload['username'],payload['sha256'],old['publication_id']))
+            except (ValueError,TypeError):continue
     @app.before_request
     def bridge_guard():
         if request.path=='/api/bridge/pair':return None
@@ -49,7 +58,7 @@ def register_adb(app,conn,now,uploads):
             a=c.execute('select * from accounts where id=?',(x.get('account_id'),)).fetchone()
             clip=c.execute('select * from clips where id=?',(x.get('clip_id'),)).fetchone()
             if not a or not clip:return jsonify(error='Account or clip not found'),404
-            if a['platform']!='TikTok' or a['username']!='@redmaagi':return jsonify(error='Эта сборка поддерживает TikTok @redmaagi на проверенном Redmi; другие сценарии пока отключены'),400
+            if not account_capability(dict(a))['automation_ready']:return jsonify(error='Для выбранного аккаунта нет активного адаптера публикации. Регистрация профиля не означает готовность автоматизации.'),409
             if x.get('rights_confirmed') is not True:return jsonify(error='Подтвердите права на видео и музыку'),400
             if not a['device_id'] or not a['username']:return jsonify(error='Assign a phone and specify exact account username'),400
             d=c.execute('select * from devices where id=?',(a['device_id'],)).fetchone()
@@ -68,6 +77,8 @@ def register_adb(app,conn,now,uploads):
             with open(os.path.join(uploads,name),'rb') as media:
                 for block in iter(lambda:media.read(1024*1024),b''):hasher.update(block)
             sha=hasher.hexdigest()
+            prior_account=c.execute('select publication_id from ui_account_media_guard where platform=? and username=? and sha256=?',(a['platform'],a['username'],sha)).fetchone()
+            if prior_account:return jsonify(error='Для этого файла уже есть попытка на выбранном аккаунте, в том числе с другого устройства. Автоповтор запрещён.',publication_id=prior_account['publication_id']),409
             previous=c.execute('select publication_id from ui_media_guard where device_id=? and username=? and sha256=?',(a['device_id'],a['username'],sha)).fetchone()
             if previous:return jsonify(error='Для этого файла уже есть попытка на аккаунте. Автоповтор запрещён; проверьте предыдущую запись',publication_id=previous['publication_id']),409
             pid=str(uuid.uuid4());jid=str(uuid.uuid4())
@@ -77,10 +88,56 @@ def register_adb(app,conn,now,uploads):
                 (jid,a['device_id'],pid,a['id'],'QUEUED',json.dumps(payload,ensure_ascii=False),available,'NEW',now()))
             c.execute('insert into ui_idempotency values(?,?)',(key,pid))
             c.execute('insert into ui_request_hash values(?,?)',(key,hashlib.sha256(json.dumps(x,sort_keys=True,ensure_ascii=False).encode()).hexdigest()))
+            c.execute('insert into ui_account_media_guard values(?,?,?,?)',(a['platform'],a['username'],sha,pid))
             c.execute('insert into ui_media_guard values(?,?,?,?)',(a['device_id'],a['username'],sha,pid))
         return jsonify(id=pid,job_id=jid)
     app.view_functions['publications']=create_publication
     app.view_functions['publication_status']=lambda pid:(jsonify(error='Use a calibrated bridge report; manual published-status overrides disabled'),410)
+    @app.get('/api/integrations')
+    def integrations():return jsonify(list(ADAPTERS.values()))
+
+    original_accounts=app.view_functions['accounts']
+    def accounts_with_capabilities():
+        response=original_accounts()
+        if request.method=='GET':
+            return jsonify([{**a,**account_capability(a)} for a in response.get_json()])
+        return response
+    app.view_functions['accounts']=accounts_with_capabilities
+
+    def device_setup(did,serial=''):
+        raw=''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(15))
+        with conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            device=c.execute('select * from devices where id=?',(did,)).fetchone()
+            if not device or device['status']=='REVOKED':return None,404
+            if c.execute("select id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING')",(did,)).fetchone():return None,409
+            c.execute('delete from ui_phone_pairs where device_id=? or expires<?',(did,time.time()))
+            c.execute('insert into ui_phone_pairs values(?,?,?)',(digest(raw),did,time.time()+600))
+        return {'format':'FAXCLIP_DEVICE_SETUP_V1','server':'https://verticalos-rxdl.onrender.com','device_id':did,'code':'-'.join(raw[i:i+5] for i in range(0,15,5)),'serial':serial,'expires_seconds':600},200
+
+    original_devices=app.view_functions['devices']
+    def devices_with_setup():
+        if request.method!='POST':return original_devices()
+        body=request.get_json(silent=True) or {};serial=body.get('usb_serial','')
+        if not isinstance(serial,str) or (serial and not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',serial)):return jsonify(error='Недопустимый USB serial'),400
+        for key in ('name','model','connection'):
+            value=body.get(key,'')
+            if not isinstance(value,str) or len(value)>150:return jsonify(error='Некорректные данные устройства'),400
+        response=original_devices();data=response.get_json()
+        setup,status=device_setup(data['id'],serial)
+        if status!=200:return jsonify(error='Устройство создано, но подключение не подготовлено'),status
+        return jsonify({**data,'setup':setup})
+    app.view_functions['devices']=devices_with_setup
+
+    @app.post('/api/devices/<did>/pairing')
+    def pair_selected_device(did):
+        body=request.get_json(silent=True) or {};serial=body.get('usb_serial','')
+        if not isinstance(serial,str) or (serial and not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',serial)):return jsonify(error='Недопустимый USB serial'),400
+        setup,status=device_setup(did,serial)
+        if status==404:return jsonify(error='Устройство не найдено'),404
+        if status==409:return jsonify(error='Устройство занято; переподключение запрещено'),409
+        return jsonify(setup)
+
     @app.post('/api/phone-pairing')
     def create_phone_pairing():
         # Owner Telegram authentication has already run. Explicit owner action re-pairs one known account.
@@ -122,7 +179,9 @@ def register_adb(app,conn,now,uploads):
             if c.execute("select id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING')",(row['device_id'],)).fetchone():return jsonify(error='Device is busy; pairing rejected'),409
             c.execute('delete from ui_phone_pairs where code_hash=?',(digest(code),))
             c.execute("update devices set token_hash=?,status='PENDING',last_seen=null where id=?",(digest(token),row['device_id']))
-        return jsonify(device_id=row['device_id'],device_token=token,account='@redmaagi',mode='ACCESSIBILITY_PUBLISH')
+        with conn() as c:profiles=c.execute('select platform,username from accounts where device_id=?',(row['device_id'],)).fetchall()
+        profiles=[dict(p) for p in profiles]
+        return jsonify(device_id=row['device_id'],device_token=token,account=profiles[0]['username'] if len(profiles)==1 else None,accounts=profiles,mode='ACCESSIBILITY_PUBLISH')
 
     @app.post('/api/bridge/heartbeat')
     def bridge_heartbeat():

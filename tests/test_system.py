@@ -19,7 +19,7 @@ def device():
  d=r.get_json();return d,{'X-Device-ID':d['id'],'Authorization':'Bearer '+d['device_token']}
 def new_job(d):
  a=request('/accounts','POST',{'platform':'TikTok','username':'@redmaagi','device_id':d['id']}).get_json()
- filename=uuid.uuid4().hex+'.mp4';Path(UPLOAD,filename).write_bytes(b'TEST_MEDIA_BYTES_NOT_REAL_VIDEO')
+ filename=uuid.uuid4().hex+'.mp4';Path(UPLOAD,filename).write_bytes(b'TEST_MEDIA_BYTES_NOT_REAL_VIDEO'+uuid.uuid4().bytes)
  clip=request('/clips','POST',{'title':'caption','source_file':filename}).get_json()
  headers={**owner,'Idempotency-Key':str(uuid.uuid4())};body={'account_id':a['id'],'clip_id':clip['id'],'caption':'caption','confirmed':True,'rights_confirmed':True}
  r=request('/publications','POST',body,headers);assert r.status_code==200,r.get_json()
@@ -39,7 +39,7 @@ class ProtocolTests(unittest.TestCase):
   self.assertIsNone(request('/bridge/claim','POST',{},h).get_json()['job'])
   self.assertEqual(request('/bridge/jobs/'+job['id']+'/renew','POST',{},h).status_code,409)
   leased={**h,'X-Job-Lease':job['lease']};self.assertEqual(request('/bridge/jobs/'+job['id']+'/renew','POST',{},leased).status_code,200)
-  media=request('/bridge/jobs/'+job['id']+'/media',headers=leased);self.assertEqual(media.data,b'TEST_MEDIA_BYTES_NOT_REAL_VIDEO');media.close()
+  media=request('/bridge/jobs/'+job['id']+'/media',headers=leased);self.assertEqual(hashlib.sha256(media.data).hexdigest(),job['payload']['sha256']);self.assertEqual(len(media.data),job['payload']['bytes']);media.close()
   other,oh=device();oh['X-Job-Lease']=job['lease'];self.assertEqual(request('/bridge/jobs/'+job['id']+'/media',headers=oh).status_code,409)
  def test_05_no_fake_completion(self):
   d,h=device();new_job(d);job=request('/bridge/claim','POST',{},h).get_json()['job'];h={**h,'X-Job-Lease':job['lease']}

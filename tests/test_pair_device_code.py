@@ -1,4 +1,4 @@
-import hashlib,json,tempfile,unittest
+import hashlib,json,tempfile,unittest,shlex,types,sys
 from pathlib import Path
 from unittest.mock import patch
 from test_system import client,request,device
@@ -46,5 +46,12 @@ class PairByCodeTests(unittest.TestCase):
   self.assertIn(b"for file in configs.glob('*.json')",new);self.assertIn(b'workers',new)
   self.assertEqual(code_mode_source(new),new)
   with self.assertRaises(RuntimeError):code_mode_source(b'unknown user-modified code')
+ def test_checksum_is_enforced_even_with_python_optimization(self):
+  command=request('/pairing-command').get_json()['command'];bootstrap=shlex.split(command)[-1]
+  class FakeResponse:
+   content=b"raise RuntimeError('UNTRUSTED_HELPER_EXECUTED')"
+   def raise_for_status(self):pass
+  fake=types.SimpleNamespace(get=lambda *args,**kwargs:FakeResponse())
+  with patch.dict(sys.modules,{'requests':fake}),self.assertRaises(SystemExit):exec(compile(bootstrap,'bootstrap','exec',optimize=2),{'__name__':'not_main'})
 if __name__=='__main__':unittest.main()
 

@@ -140,7 +140,7 @@ def register_adb(app,conn,now,uploads):
     def pairing_command():
         with open(os.path.join(app.root_path,'bridge','pair_device_code.py'),'rb') as f:script=f.read()
         sha=hashlib.sha256(script).hexdigest()
-        bootstrap="import requests,hashlib; r=requests.get('https://verticalos-rxdl.onrender.com/device-pairing-helper.py',timeout=30); r.raise_for_status(); s=r.content; assert hashlib.sha256(s).hexdigest()=="+repr(sha)+", 'Helper checksum mismatch'; exec(compile(s,'pair_device_code.py','exec'))"
+        bootstrap="import requests,hashlib; r=requests.get('https://verticalos-rxdl.onrender.com/device-pairing-helper.py',timeout=30); r.raise_for_status(); s=r.content; hashlib.sha256(s).hexdigest()=="+repr(sha)+" or __import__('sys').exit('Helper checksum mismatch'); exec(compile(s,'pair_device_code.py','exec'))"
         command='"$HOME/Downloads/faxclip-telegram-bridge-v14/.venv/bin/python" -c '+shlex.quote(bootstrap)
         return jsonify(command=command,application_install_required=False)
 

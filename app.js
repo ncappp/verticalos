@@ -65,7 +65,7 @@ const routes={dashboard,content,accounts,devices,publishing,tasks,analytics,regi
 let navigationId=0;
 async function goPage(name){
  const current=++navigationId;
- document.querySelectorAll("nav .nav-item").forEach(n=>{n.classList.toggle("active",n.dataset.page===name);n.setAttribute("aria-current",n.dataset.page===name?"page":"false")});
+ document.querySelectorAll("nav .nav-item").forEach(n=>{n.classList.toggle("active",n.dataset.page===name);if(n.dataset.page===name&&innerWidth<=600)n.scrollIntoView({block:"nearest",inline:"center"});n.setAttribute("aria-current",n.dataset.page===name?"page":"false")});
  document.getElementById("appError")?.remove();
  view.innerHTML='<div class="card" role="status">Загрузка…</div>';
  try{await (routes[name]||dashboard)();}catch(e){if(current===navigationId){view.innerHTML='<div class="card">Не удалось загрузить раздел. Причина указана выше.</div>';showAppError(e)}}
@@ -130,7 +130,7 @@ let cleanupPreview=null;
 async function confirmClearAttempts(){
  cleanupPreview=await api('/maintenance/attempts-preview');
  if(cleanupPreview.active){modalBox('<h3>Телефон занят</h3><p>Сначала безопасно остановите менеджер и дождитесь завершения текущей операции. Активная публикация не прерывается очисткой.</p><button class="btn" onclick="closeModal()">Понятно</button>');return}
- modalBox(`<h3>Удалить все попытки?</h3><p>Будут удалены ${cleanupPreview.publications} записей публикаций и ${cleanupPreview.jobs} заданий, включая очередь и остановленные попытки.</p><p style="margin-top:12px"><b>Ролики в TikTok, аккаунты, устройства и исходные клипы не удаляются.</b> Защита от повторной отправки того же видео сохраняется.</p><label style="display:block;margin-top:12px"><input id="cleanupConsent" type="checkbox"> Подтверждаю удаление всей очереди и истории попыток</label><div class="row" style="margin-top:16px"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="cleanupSubmit" onclick="clearAttempts()">Удалить попытки</button></div>`);
+ modalBox(`<h3>Удалить все попытки?</h3><p>Будут удалены ${cleanupPreview.publications} записей публикаций и ${cleanupPreview.jobs} заданий, включая очередь и остановленные попытки.</p><p style="margin-top:12px"><b>Ролики в TikTok, аккаунты, устройства и исходные клипы не удаляются.</b> Защита от повторной отправки того же видео сохраняется.</p><label style="display:block;margin-top:12px"><input id="cleanupConsent" type="checkbox"> Подтверждаю удаление всей очереди и истории попыток</label><div class="row" style="margin-top:16px"><button class="close" onclick="closeModal()">Отмена</button><button class="btn danger" id="cleanupSubmit" onclick="clearAttempts()">Удалить попытки</button></div>`);
 }
 async function clearAttempts(){
  if(!document.getElementById('cleanupConsent').checked)throw new Error('Подтвердите удаление галочкой');

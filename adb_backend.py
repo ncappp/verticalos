@@ -254,7 +254,10 @@ def register_adb(app,conn,now,uploads):
         with conn() as c:
             c.execute('BEGIN IMMEDIATE');did=g.bridge_device['id']
             row=c.execute('select * from ui_jobs where id=? and device_id=?',(jid,did)).fetchone()
-            if not row:return jsonify(error='Unknown job; never reconstruct or resend'),404
+            if not row:
+                removed=c.execute('select 1 from ui_deleted_jobs where id=? and device_id=?',(jid,did)).fetchone()
+                if removed:return jsonify(job=None,done=True,deleted=True)
+                return jsonify(error='Unknown job; never reconstruct or resend'),404
             if row['status']=='DONE':return jsonify(job=None,done=True)
             if row['status'] not in ('NEEDS_REVIEW','VERIFYING') or row['phase'] not in ('SUBMITTED','UI_CONFIRMED'):
                 return jsonify(error='Only submitted jobs may be verified; no publication retry'),409

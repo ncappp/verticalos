@@ -135,6 +135,8 @@ def init_db():
     if "period_start" not in cols:c.execute("alter table tasks add column period_start TEXT")
     if "period_end" not in cols:c.execute("alter table tasks add column period_end TEXT")
     c.commit(); c.close()
+    from maintenance import apply_bootstrap
+    apply_bootstrap(conn,now)
 
 @app.post("/api/local-session")
 def local_session():
@@ -380,10 +382,12 @@ def ingest():
 @app.get("/api/health")
 def health():
     c=conn(); c.execute("select 1").fetchone()
-    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",verification_recovery=1,device_setup=1,device_disconnect=1,device_pairing_code=1,storage="sqlite_local_requires_persistent_disk")
+    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",verification_recovery=1,device_setup=1,device_disconnect=1,device_pairing_code=1,storage="sqlite_local_requires_persistent_disk",queue_cleanup=1,enrollment_backup=1)
 
 from adb_backend import register_adb
 register_adb(app,conn,now,UPLOAD)
+from maintenance import register_maintenance
+register_maintenance(app,conn,now,UPLOAD)
 
 if __name__=="__main__":
     init_db()

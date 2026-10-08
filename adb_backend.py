@@ -104,6 +104,22 @@ def register_adb(app,conn,now,uploads):
         return response
     app.view_functions['accounts']=accounts_with_capabilities
 
+    @app.patch('/api/accounts/<aid>/device')
+    def assign_account_device(aid):
+        body=request.get_json(silent=True) or {};did=body.get('device_id')
+        if did is not None and (not isinstance(did,str) or not re.fullmatch(r'[a-f0-9-]{36}',did)):return jsonify(error='Некорректное устройство'),400
+        with conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            account=c.execute('select id from accounts where id=?',(aid,)).fetchone()
+            if not account:return jsonify(error='Аккаунт не найден'),404
+            if did is not None:
+                device=c.execute("select id from devices where id=? and status!='REVOKED'",(did,)).fetchone()
+                if not device:return jsonify(error='Устройство не найдено или отозвано'),404
+            if c.execute("select id from ui_jobs where account_id=? and status in ('QUEUED','RUNNING','VERIFYING','NEEDS_REVIEW')",(aid,)).fetchone():
+                return jsonify(error='У аккаунта есть незавершённые задания. Их нельзя незаметно перенести на другой телефон.'),409
+            c.execute('update accounts set device_id=? where id=?',(did,aid))
+        return jsonify(ok=True)
+
     def device_setup(did,serial=''):
         raw=''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(15))
         with conn() as c:

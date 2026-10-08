@@ -48,4 +48,12 @@ class DevicesFlowTests(unittest.TestCase):
   self.assertNotIn('connectMac',publishing);self.assertNotIn('addPublication()',publishing)
   dashboard=s.split('async function dashboard()',1)[1].split('async function accounts()',1)[0]
   self.assertNotIn('9:16',dashboard)
+ def test_assign_existing_profile(self):
+  d,h=device();other,oh=device();a=request('/accounts','POST',{'platform':'YouTube','username':'my-channel','device_id':d['id']}).get_json()
+  self.assertEqual(request('/accounts/'+a['id']+'/device','PATCH',{'device_id':other['id']}).status_code,200)
+  with conn() as c:self.assertEqual(c.execute('select device_id from accounts where id=?',(a['id'],)).fetchone()['device_id'],other['id'])
+ def test_never_move_unfinished_job(self):
+  from test_system import new_job
+  d,h=device();pub,body,key=new_job(d);other,oh=device()
+  self.assertEqual(request('/accounts/'+body['account_id']+'/device','PATCH',{'device_id':other['id']}).status_code,409)
 if __name__=='__main__':unittest.main()

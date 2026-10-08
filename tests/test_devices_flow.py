@@ -56,4 +56,18 @@ class DevicesFlowTests(unittest.TestCase):
   from test_system import new_job
   d,h=device();pub,body,key=new_job(d);other,oh=device()
   self.assertEqual(request('/accounts/'+body['account_id']+'/device','PATCH',{'device_id':other['id']}).status_code,409)
+ def test_disconnect_keeps_identity_credentials_and_bindings(self):
+  d,h=device();a=request('/accounts','POST',{'platform':'YouTube','username':'my-channel','device_id':d['id']}).get_json()
+  request('/bridge/heartbeat','POST',{'battery':80},h)
+  self.assertEqual(request('/bridge/disconnect','POST',{},h).status_code,200)
+  with conn() as c:
+   row=c.execute('select * from devices where id=?',(d['id'],)).fetchone();self.assertEqual(row['status'],'OFFLINE')
+   self.assertEqual(c.execute('select device_id from accounts where id=?',(a['id'],)).fetchone()['device_id'],d['id'])
+  self.assertEqual(request('/bridge/heartbeat','POST',{'battery':81},h).status_code,200)
+  with conn() as c:self.assertEqual(c.execute('select status from devices where id=?',(d['id'],)).fetchone()['status'],'ONLINE')
+ def test_disconnect_scope_only_own_device(self):
+  a,ah=device();b,bh=device();request('/bridge/heartbeat','POST',{},bh)
+  self.assertEqual(request('/bridge/disconnect','POST',{},ah).status_code,200)
+  with conn() as c:self.assertEqual(c.execute('select status from devices where id=?',(b['id'],)).fetchone()['status'],'ONLINE')
+  self.assertEqual(client.post('/api/bridge/disconnect',json={}).status_code,401)
 if __name__=='__main__':unittest.main()

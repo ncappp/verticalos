@@ -209,6 +209,11 @@ def register_adb(app,conn,now,uploads):
             if x.get('mode')=='ACCESSIBILITY_PUBLISH' and x.get('helper_version')==14 and x.get('app_version')=='44.6.4':
                 c.execute('insert or replace into device_capabilities values(?,?,?,?)',(g.bridge_device['id'],x['mode'],14,x['app_version']))
         return jsonify(ok=True)
+    @app.post('/api/bridge/disconnect')
+    def bridge_disconnect():
+        # Keep device, credentials, account bindings and job state; change connectivity only.
+        with conn() as c:c.execute("update devices set status='OFFLINE' where id=?",(g.bridge_device['id'],))
+        return jsonify(ok=True)
     @app.post('/api/bridge/claim')
     def bridge_claim():
         with conn() as c:

@@ -31,7 +31,7 @@ def main():
   with requests.get(SERVER+'/api/health',timeout=30) as r:
    if not r.ok or r.json().get('device_setup')!=1:raise SystemExit('Сервер ещё не обновлён для раздела Устройства. Менеджер не запущен.')
  except requests.RequestException:raise SystemExit('Сервер недоступен. Менеджер не запущен.')
- downloads=Path.home()/'Downloads';workers={};announced=set()
+ downloads=Path.home()/'Downloads';workers={};announced=set();reported_offline=set()
  def note(key,text):
   if key not in announced:print(text,flush=True);announced.add(key)
  def worker(serial,settings,stop):
@@ -44,6 +44,7 @@ def main():
  print('FaxClip: менеджер устройств запущен. Добавляйте устройства в Mini App → Устройства; файлы подключения сохраняйте в Downloads этого Mac.',flush=True)
  try:
   while True:
+   if (private/'manager-stop').exists():raise KeyboardInterrupt
    listing=subprocess.run([str(adbpath),'devices'],capture_output=True,text=True,timeout=30).stdout
    phones=[x.split()[0] for x in listing.splitlines()[1:] if len(x.split())>1 and x.split()[1]=='device']
    settings={}
@@ -60,6 +61,14 @@ def main():
        if r.status_code!=409:continue
      settings[serial]=x
     except Exception:continue
+   for serial,x in settings.items():
+    if serial in phones:reported_offline.discard(serial);continue
+    if serial in reported_offline:continue
+    try:
+     h={'X-Device-ID':x['device_id'],'Authorization':'Bearer '+x['device_token']}
+     with requests.post(SERVER+'/api/bridge/disconnect',headers=h,json={},timeout=10) as r:
+      if r.ok:reported_offline.add(serial)
+    except requests.RequestException:pass
    for file in downloads.glob('faxclip-connect-*.json'):
     try:
      if file.stat().st_size>4096:continue

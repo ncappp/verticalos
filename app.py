@@ -380,7 +380,7 @@ def ingest():
 @app.get("/api/health")
 def health():
     c=conn(); c.execute("select 1").fetchone()
-    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",verification_recovery=1,device_setup=1,storage="sqlite_local_requires_persistent_disk")
+    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",verification_recovery=1,device_setup=1,device_disconnect=1,storage="sqlite_local_requires_persistent_disk")
 
 from adb_backend import register_adb
 register_adb(app,conn,now,UPLOAD)

@@ -1,5 +1,5 @@
 """Authenticated queue for PC-controlled Android devices. No platform API tokens."""
-import hashlib,hmac,json,os,re,secrets,time,uuid,struct,threading
+import hashlib,hmac,json,os,re,secrets,time,uuid,struct,threading,shlex
 from flask import request,jsonify,g,send_from_directory
 from datetime import datetime
 from platform_adapters import ADAPTERS,account_capability
@@ -131,9 +131,24 @@ def register_adb(app,conn,now,uploads):
             c.execute('insert into ui_phone_pairs values(?,?,?)',(digest(raw),did,time.time()+600))
         return {'format':'FAXCLIP_DEVICE_SETUP_V1','server':'https://verticalos-rxdl.onrender.com','device_id':did,'code':'-'.join(raw[i:i+5] for i in range(0,15,5)),'serial':serial,'expires_seconds':600},200
 
+    @app.get('/device-pairing-helper.py')
+    def device_pairing_helper():
+        # Public software source only; never contains a user's pairing code or token.
+        return send_from_directory(os.path.join(app.root_path,'bridge'),'pair_device_code.py',mimetype='text/plain')
+
+    @app.get('/api/pairing-command')
+    def pairing_command():
+        with open(os.path.join(app.root_path,'bridge','pair_device_code.py'),'rb') as f:script=f.read()
+        sha=hashlib.sha256(script).hexdigest()
+        bootstrap="import requests,hashlib; r=requests.get('https://verticalos-rxdl.onrender.com/device-pairing-helper.py',timeout=30); r.raise_for_status(); s=r.content; assert hashlib.sha256(s).hexdigest()=="+repr(sha)+", 'Helper checksum mismatch'; exec(compile(s,'pair_device_code.py','exec'))"
+        command='"$HOME/Downloads/faxclip-telegram-bridge-v14/.venv/bin/python" -c '+shlex.quote(bootstrap)
+        return jsonify(command=command,application_install_required=False)
+
     original_devices=app.view_functions['devices']
     def devices_with_setup():
-        if request.method!='POST':return original_devices()
+        if request.method!='POST':
+            response=original_devices()
+            return jsonify([{**d,'enrolled':bool(d.get('last_seen'))} for d in response.get_json()])
         body=request.get_json(silent=True) or {};serial=body.get('usb_serial','')
         if not isinstance(serial,str) or (serial and not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}',serial)):return jsonify(error='Недопустимый USB serial'),400
         for key in ('name','model','connection'):

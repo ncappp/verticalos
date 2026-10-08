@@ -86,22 +86,33 @@ class Bridge:
         self.stop.clear();self.lost.clear();thread=threading.Thread(target=self.renew,args=(job,),daemon=True);thread.start()
         path=None;publisher=None
         try:
-            if job.get('phase')!='NEW':raise ScreenError('Prior publish attempt is ambiguous; no automatic retry')
+            if job.get('verification_only') is not True and job.get('phase')!='NEW':raise ScreenError('Prior publish attempt is ambiguous; no automatic retry')
             variables=job['payload']
             if self.phone.get('mode')=='ACCESSIBILITY_PUBLISH':
                 from accessibility_publisher import AccessibilityPublisher
                 publisher=AccessibilityPublisher(self,job)
-                path=self.download(job)
-                result=publisher.run(path)
+                if job.get('verification_only') is True:
+                    record=json.loads((self.work/(job['id']+'-verification.json')).read_text())
+                    self.adb.ready()
+                    if publisher.control('status')!='SERVICE_CONNECTED_V14':raise ScreenError('HELPER_V14_REQUIRED')
+                    package=self.adb.shell('dumpsys','package','com.zhiliaoapp.musically')
+                    if not re.search(r'versionName=44\.6\.4(?:\s|$)',package):raise ScreenError('TIKTOK_VERSION_NOT_CALIBRATED')
+                    result=publisher.verify_existing(record)
+                else:
+                    path=self.download(job)
+                    result=publisher.run(path)
                 self.call('/jobs/'+job['id']+'/phase',{'phase':'UI_CONFIRMED'},job)
                 self.call('/jobs/'+job['id']+'/evidence',job=job,binary=publisher.capture('verified'))
                 self.call('/jobs/'+job['id']+'/complete',result,job)
+                file=self.work/(job['id']+'-verification.json')
+                if file.exists():file.rename(self.work/(job['id']+'-verification.done.json'))
                 print('FaxClip: verified profile post and URL:',job['id'])
                 return
             raise ScreenError('Use ACCESSIBILITY_PUBLISH with helper v14; legacy input-tap automation is disabled')
         except Exception as error:
             message=str(error) if isinstance(error,ScreenError) else 'Unexpected failure; review locally'
             print('Stopped for review:',job['id'],message)
+            if job.get('verification_only') is True:(self.work/(job['id']+'-recovery-paused')).touch(mode=0o600)
             try:
                 shot=self.adb.run('exec-out','screencap','-p',binary=True)
                 self.call('/jobs/'+job['id']+'/evidence',job=job,binary=shot)
@@ -117,7 +128,20 @@ class Bridge:
     def run(self,once=False):
         while True:
             try:
-                self.heartbeat();job=self.call('/claim').get('job')
+                self.heartbeat();job=None
+                for file in sorted(self.work.glob('*-verification.json')):
+                    try:
+                        record=json.loads(file.read_text());jid=record.get('job_id','')
+                        if not re.fullmatch(r'[a-f0-9-]{36}',jid):continue
+                        if (self.work/(jid+'-recovery-paused')).exists():continue
+                        if record.get('stage') not in ('SUBMITTED','LINK_CAPTURED','VERIFIED'):continue
+                        response=self.call('/jobs/'+jid+'/verification-claim',{})
+                        if response.get('done'):
+                            file.rename(self.work/(jid+'-verification.done.json'));continue
+                        candidate=response.get('job')
+                        if candidate and candidate.get('verification_only') is True:job=candidate;break
+                    except Exception:continue
+                if job is None:job=self.call('/claim').get('job')
                 if job:self.execute(job)
                 if once:return
             except Exception:print('USB or server unavailable; retrying without logging credentials')

@@ -16,3 +16,8 @@ No uiautomator in the gated route because diagnostic XML collection interrupted 
 Test status at commit: 33 server/model tests, 127 Android model checks, and isolated browser form tests passed. Physical v13 publication+profile+URL flow was observed on owner phone. Full Telegram queue → v14 → new actual post remains to be tested after deployment.
 
 Device software is delivered as a separate Mac bridge + signed APK kit; Python is an internal bridge component, not the video-upload UI. Owners use Telegram for uploads. Repo does not contain production tokens, runtime databases, videos or signing keys.
+
+## Automatic verification update (free test mode)
+Bounded post-link/foreground reinspection runs in the normal bridge cycle. An fsynced, per-job local checkpoint retains the verified import name, source hash, exact caption, prior post URL and captured post URL. Recovery uses a device-authenticated VERIFYING lease restricted to submitted jobs; it cannot download media, reset the phase or authorize publication. Completion still requires two UI reopen confirmations, matching source/caption, and PNG evidence. Unresolved results remain NEEDS_REVIEW. Old jobs without checkpoints are not reconstructed or resubmitted.
+The Android helper checks clipboard write timestamps when text is unchanged, and reads only with foreground window focus. Replacement APK installation preserves native duplicate guards; do not uninstall or clear app data. This does not prove binary identity of TikTok-transcoded video.
+Render remains Free, with ephemeral SQLite/uploads. Deployment/restart can lose queue, tokens and server guards; this release is a free test setup, not durable storage. No payment or persistent disk was enabled.

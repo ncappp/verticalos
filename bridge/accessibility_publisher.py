@@ -1,7 +1,7 @@
 """FaxClip queue -> verified Android import -> caption -> one publish -> URL check.
 No uiautomator during the route. No input taps, tests, retry authorization or credential UI.
 """
-import base64,hashlib,json,re,shlex,subprocess,time,uuid
+import base64,hashlib,json,os,re,shlex,subprocess,time,uuid
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
@@ -14,6 +14,56 @@ class AccessibilityPublisher:
     def __init__(self,bridge,job):
         self.b=bridge;self.adb=bridge.adb;self.job=job;self.payload=job['payload'];self.name='faxclip-auto-'+uuid.uuid4().hex+'.mp4'
         self.log=[];self.name_bound=False
+    def checkpoint(self,stage,prior_url=None,post_url=None):
+        record=dict(job_id=self.job['id'],name=self.name,sha256=self.payload['sha256'],
+                    caption=self.payload['caption'],prior_url=prior_url,post_url=post_url,stage=stage)
+        file=self.b.work/(self.job['id']+'-verification.json');tmp=file.with_suffix('.tmp')
+        fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+        with os.fdopen(fd,'w') as f:
+            json.dump(record,f,ensure_ascii=False);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,file)
+        d=os.open(self.b.work,os.O_RDONLY)
+        try:os.fsync(d)
+        finally:os.close(d)
+    def reopen_verified(self,url):
+        for round in (1,2):
+            self.open_url(url)
+            for inspection in range(4):
+                state=self.control('verification_reopened')
+                if state=='MATCHING_POST_REOPENED_BY_URL':break
+                if state not in ('POST_AUTHOR_OR_CAPTION_NOT_MATCHED','TIKTOK_NOT_FOREGROUND'):
+                    raise ScreenError('REOPEN_'+state)
+                if inspection<3:time.sleep(3)
+            else:raise ScreenError('REOPEN_'+state)
+            self.capture('reopened-'+str(round))
+    def verify_existing(self,record):
+        if record.get('job_id')!=self.job['id'] or record.get('sha256')!=self.payload.get('sha256') or record.get('caption')!=self.payload.get('caption'):
+            raise ScreenError('RECOVERY_JOB_BINDING_MISMATCH')
+        if record.get('stage') not in ('SUBMITTED','LINK_CAPTURED','VERIFIED') or not re.fullmatch(r'faxclip-auto-[a-f0-9]{32}\.mp4',record.get('name','')):
+            raise ScreenError('NO_SUBMISSION_CHECKPOINT_NO_RETRY')
+        self.name=record['name'];self.bind()
+        previous=record.get('prior_url');known=record.get('post_url')
+        for attempt in range(3):
+            self.bind()
+            try:
+                if self.find_first_post():
+                    url=self.post_link()
+                    if url==previous:raise ScreenError('PRIOR_POST_NOT_NEW_NO_RETRY')
+                    if known and url!=self.canonical(known):raise ScreenError('RECOVERY_POST_URL_CHANGED')
+                    # Retain this exact link across all later retries, including this invocation.
+                    known=url
+                    self.checkpoint('LINK_CAPTURED',previous,url)
+                    self.reopen_verified(url)
+                    self.checkpoint('VERIFIED',previous,url)
+                    return dict(post_url=url,verification=VERIFY_OK,sha256=self.payload['sha256'],caption=self.payload['caption'])
+            except ScreenError as exc:
+                code=str(exc)
+                retryable=code.startswith('LINK_READ_') and code[10:] in ('NO_FRESH_LINK','NO_VALID_TIKTOK_LINK','CLIPBOARD_READ_FAILED','CLIPBOARD_NOT_FOCUSED','BASELINE_CAPTURED')
+                retryable=retryable or code in ('REOPEN_POST_AUTHOR_OR_CAPTION_NOT_MATCHED','REOPEN_TIKTOK_NOT_FOREGROUND','PROFILE_TIKTOK_NOT_FOREGROUND','VERIFY_TIKTOK_NOT_FOREGROUND')
+                if not retryable:raise
+                self.log_state(code)
+            if attempt<2:time.sleep(5)
+        raise ScreenError('SUBMITTED_RESULT_NOT_CONFIRMED_NO_RETRY')
     def log_state(self,state):
         if not re.fullmatch(r'[A-Z0-9_;=:.@/\-]+',state):state='STATE_RECORDED'
         self.log.append(state)
@@ -84,9 +134,18 @@ class AccessibilityPublisher:
         if self.control('verification_share')!='VERIFICATION_SHARE_OPENED':raise ScreenError('SHARE_LINK_UNAVAILABLE')
         time.sleep(2);self.capture('share-link')
         if self.control('verification_copy_link')!='COPY_LINK_ACTION_ACCEPTED':raise ScreenError('COPY_LINK_UNAVAILABLE')
-        time.sleep(3);result=self.clipboard('read',token)
-        if not result.startswith('FRESH_TIKTOK_LINK_CAPTURED;url='):raise ScreenError('FRESH_LINK_NOT_CONFIRMED')
-        return self.canonical(result.split(';url=',1)[1])
+        time.sleep(3)
+        # Re-read only; never recopy, reset baseline, publish or authorize a retry.
+        for attempt in range(3):
+            result=self.clipboard('read',token)
+            if result.startswith('FRESH_TIKTOK_LINK_CAPTURED;url='):
+                return self.canonical(result.split(';url=',1)[1])
+            reason=result.split(';',1)[0]
+            if not re.fullmatch(r'[A-Z_]{1,48}',reason):reason='UNCLASSIFIED'
+            if reason not in ('NO_FRESH_LINK','NO_VALID_TIKTOK_LINK','CLIPBOARD_READ_FAILED','CLIPBOARD_NOT_FOCUSED','BASELINE_CAPTURED'):
+                break
+            if attempt<2:time.sleep(3)
+        raise ScreenError('LINK_READ_'+reason)
     def import_and_configure(self,path):
         sha=hashlib.sha256()
         with open(path,'rb') as f:
@@ -121,6 +180,7 @@ class AccessibilityPublisher:
         # Obtain the URL of any existing top post with identical caption, BEFORE publishing.
         # If that URL cannot be read, fail closed rather than later claiming an older post as new.
         prior_url=self.post_link() if self.find_first_post() else None
+        self.checkpoint('READY',prior_url)
         self.adb.shell('am','start','-W','-n',PKG+'/com.ss.android.ugc.aweme.splash.SplashActivity');time.sleep(2)
         self.wait('tiktok_open_videos_start','ROUTE_STARTED','VIDEO_TAB_SELECTED',130,'--es','expected_account','@redmaagi')
         self.capture('gallery')
@@ -130,20 +190,13 @@ class AccessibilityPublisher:
         time.sleep(3);self.capture('editor')
         self.wait('tiktok_editor_next_start','EDITOR_NEXT_ROUTE_STARTED','EDITOR_NEXT_ACTION_ACCEPTED',35)
         # Durable server intent BEFORE Android can issue any irreversible click.
+        self.checkpoint('PUBLISH_INTENT',prior_url)
         self.b.call('/jobs/'+self.job['id']+'/phase',{'phase':'PUBLISH_STARTED'},self.job)
         self.wait('tiktok_submission_start','SUBMISSION_ROUTE_STARTED','PUBLICATION_SUBMITTED_UNVERIFIED',50,'--es','job_name',self.name)
+        self.checkpoint('SUBMITTED',prior_url)
         self.b.call('/jobs/'+self.job['id']+'/phase',{'phase':'SUBMITTED'},self.job)
         self.capture('after-submit');time.sleep(15)
-        for _ in range(3):
-            self.bind()
-            if self.find_first_post():
-                url=self.post_link()
-                if url!=prior_url:
-                    for round in (1,2):
-                        self.open_url(url);self.capture('reopened-'+str(round))
-                        if self.control('verification_reopened')!='MATCHING_POST_REOPENED_BY_URL':raise ScreenError('POST_REOPEN_NOT_CONFIRMED')
-                    return dict(post_url=url,verification=VERIFY_OK,sha256=sha,caption=self.payload['caption'])
-            time.sleep(10)
-        raise ScreenError('SUBMITTED_RESULT_NOT_CONFIRMED_NO_RETRY')
+        record=json.loads((self.b.work/(self.job['id']+'-verification.json')).read_text())
+        return self.verify_existing(record)
     def save_log(self):
         (self.b.work/(self.job['id']+'-route.json')).write_text(json.dumps({'states':self.log,'no_automatic_retry':True},indent=2),encoding='utf8')

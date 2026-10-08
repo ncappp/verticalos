@@ -89,7 +89,7 @@ def register_adb(app,conn,now,uploads):
             c.execute('BEGIN IMMEDIATE')
             account=c.execute("select * from accounts where platform='TikTok' and username='@redmaagi'").fetchone()
             did=account['device_id'] if account and account['device_id'] else str(uuid.uuid4())
-            if c.execute("select id from ui_jobs where device_id=? and status='RUNNING'",(did,)).fetchone():return jsonify(error='Телефон выполняет задачу. Переподключение пока запрещено'),409
+            if c.execute("select id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING')",(did,)).fetchone():return jsonify(error='Телефон выполняет задачу. Переподключение пока запрещено'),409
             device=c.execute('select * from devices where id=?',(did,)).fetchone()
             if not device:
                 c.execute('insert into devices values(?,?,?,?,?,?,?,?,?)',(did,'Redmi для TikTok','23053RN02Y','USB / Mac bridge','PENDING',0,digest(secrets.token_urlsafe(48)),None,now()))
@@ -119,7 +119,7 @@ def register_adb(app,conn,now,uploads):
             c.execute('BEGIN IMMEDIATE')
             row=c.execute('select * from ui_phone_pairs where code_hash=? and expires>?',(digest(code),time.time())).fetchone()
             if not row:return jsonify(error='Invalid, used or expired pairing code'),401
-            if c.execute("select id from ui_jobs where device_id=? and status='RUNNING'",(row['device_id'],)).fetchone():return jsonify(error='Device is busy; pairing rejected'),409
+            if c.execute("select id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING')",(row['device_id'],)).fetchone():return jsonify(error='Device is busy; pairing rejected'),409
             c.execute('delete from ui_phone_pairs where code_hash=?',(digest(code),))
             c.execute("update devices set token_hash=?,status='PENDING',last_seen=null where id=?",(digest(token),row['device_id']))
         return jsonify(device_id=row['device_id'],device_token=token,account='@redmaagi',mode='ACCESSIBILITY_PUBLISH')
@@ -138,10 +138,10 @@ def register_adb(app,conn,now,uploads):
     def bridge_claim():
         with conn() as c:
             c.execute('BEGIN IMMEDIATE');did=g.bridge_device['id']
-            expired=c.execute("select publication_id from ui_jobs where device_id=? and status='RUNNING' and lease_until<?",(did,time.time())).fetchall()
+            expired=c.execute("select publication_id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING') and lease_until<?",(did,time.time())).fetchall()
             for row in expired:c.execute("update publications set status='NEEDS_REVIEW',error='Bridge lost connection; inspect app before retry' where id=?",(row['publication_id'],))
-            c.execute("update ui_jobs set status='NEEDS_REVIEW',lease_hash=null where device_id=? and status='RUNNING' and lease_until<?",(did,time.time()))
-            if c.execute("select id from ui_jobs where device_id=? and status in ('RUNNING','NEEDS_REVIEW')",(did,)).fetchone():return jsonify(job=None,paused=True)
+            c.execute("update ui_jobs set status='NEEDS_REVIEW',lease_hash=null where device_id=? and status in ('RUNNING','VERIFYING') and lease_until<?",(did,time.time()))
+            if c.execute("select id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING','NEEDS_REVIEW')",(did,)).fetchone():return jsonify(job=None,paused=True)
             row=c.execute("select * from ui_jobs where device_id=? and status='QUEUED' and available<=? order by created_at limit 1",(did,time.time())).fetchone()
             if not row:return jsonify(job=None)
             lease=secrets.token_urlsafe(32)
@@ -152,8 +152,22 @@ def register_adb(app,conn,now,uploads):
         with conn() as c:row=c.execute('select * from ui_jobs where id=? and device_id=?',(jid,g.bridge_device['id'])).fetchone()
         if not row or not row['lease_hash'] or not hmac.compare_digest(row['lease_hash'],digest(request.headers.get('X-Job-Lease',''))):return None
         if allow_done and row['status']=='DONE':return dict(row)
-        if row['status']!='RUNNING' or row['lease_until']<time.time():return None
+        if row['status'] not in ('RUNNING','VERIFYING') or row['lease_until']<time.time():return None
         return dict(row)
+    @app.post('/api/bridge/jobs/<jid>/verification-claim')
+    def verification_claim(jid):
+        with conn() as c:
+            c.execute('BEGIN IMMEDIATE');did=g.bridge_device['id']
+            row=c.execute('select * from ui_jobs where id=? and device_id=?',(jid,did)).fetchone()
+            if not row:return jsonify(error='Unknown job; never reconstruct or resend'),404
+            if row['status']=='DONE':return jsonify(job=None,done=True)
+            if row['status'] not in ('NEEDS_REVIEW','VERIFYING') or row['phase'] not in ('SUBMITTED','UI_CONFIRMED'):
+                return jsonify(error='Only submitted jobs may be verified; no publication retry'),409
+            if row['status']=='VERIFYING' and row['lease_until'] and row['lease_until']>=time.time():return jsonify(error='Verification already owned'),409
+            if c.execute("select id from ui_jobs where device_id=? and id!=? and status in ('RUNNING','VERIFYING')",(did,jid)).fetchone():return jsonify(error='Phone busy'),409
+            lease=secrets.token_urlsafe(32)
+            c.execute("update ui_jobs set status='VERIFYING',lease_hash=?,lease_until=? where id=?",(digest(lease),time.time()+TTL,jid))
+        return jsonify(job=dict(id=jid,lease=lease,payload=json.loads(row['payload']),phase=row['phase'],verification_only=True))
     @app.post('/api/bridge/jobs/<jid>/renew')
     def bridge_renew(jid):
         if not current(jid):return jsonify(error='Invalid job lease'),409
@@ -162,7 +176,7 @@ def register_adb(app,conn,now,uploads):
     @app.get('/api/bridge/jobs/<jid>/media')
     def bridge_media(jid):
         row=current(jid)
-        if not row:return jsonify(error='Invalid job lease'),409
+        if not row or row['status']=='VERIFYING':return jsonify(error='Media unavailable for verification-only lease'),409
         with conn() as c:r=c.execute('select c.source_file from clips c join publications p on c.id=p.clip_id where p.id=?',(row['publication_id'],)).fetchone()
         return send_from_directory(uploads,r['source_file'],as_attachment=True)
     @app.post('/api/bridge/jobs/<jid>/phase')
@@ -170,6 +184,7 @@ def register_adb(app,conn,now,uploads):
         row=current(jid)
         if not row:return jsonify(error='Invalid job lease'),409
         value=(request.get_json(silent=True) or {}).get('phase')
+        if row['status']=='VERIFYING' and value!='UI_CONFIRMED':return jsonify(error='Verification-only phase restriction'),409
         allowed={'NEW':['PUBLISH_STARTED'],'PUBLISH_STARTED':['SUBMITTED'],'SUBMITTED':['UI_CONFIRMED']}
         if value!=row['phase'] and value not in allowed.get(row['phase'],[]):return jsonify(error='Invalid phase transition'),409
         with conn() as c:c.execute('update ui_jobs set phase=? where id=?',(value,jid))
@@ -200,7 +215,7 @@ def register_adb(app,conn,now,uploads):
         result={'confirmed_by':'ANDROID_PROFILE_AND_URL','post_url':url,'source_sha256':x['sha256'],'verification':x['verification'],'note':'Matched profile/caption and reopened twice; not public-viewer or binary identity verification'}
         with conn() as c:
             c.execute('BEGIN IMMEDIATE')
-            changed=c.execute("update ui_jobs set status='DONE',result=? where id=? and status='RUNNING'",(json.dumps(result),jid))
+            changed=c.execute("update ui_jobs set status='DONE',result=? where id=? and status in ('RUNNING','VERIFYING')",(json.dumps(result),jid))
             if changed.rowcount:
                 c.execute("update publications set status='UI_CONFIRMED',published_at=?,external_id=?,error=null where id=?",(now(),url,row['publication_id']))
                 c.execute("update tasks set done=min(target,done+1) where unit in ('клипов','публикаций')")
@@ -242,8 +257,8 @@ def register_adb(app,conn,now,uploads):
     def bridge_revoke(did):
         with conn() as c:
             c.execute("update devices set token_hash=?,status='REVOKED' where id=?",(digest(secrets.token_urlsafe(64)),did))
-            c.execute("update publications set status='NEEDS_REVIEW' where id in (select publication_id from ui_jobs where device_id=? and status='RUNNING')",(did,))
-            c.execute("update ui_jobs set status='NEEDS_REVIEW',lease_hash=null where device_id=? and status='RUNNING'",(did,))
+            c.execute("update publications set status='NEEDS_REVIEW' where id in (select publication_id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING'))",(did,))
+            c.execute("update ui_jobs set status='NEEDS_REVIEW',lease_hash=null where device_id=? and status in ('RUNNING','VERIFYING')",(did,))
         return jsonify(ok=True)
 
     original_clips=app.view_functions['clips']

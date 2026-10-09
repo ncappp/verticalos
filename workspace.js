@@ -1,0 +1,120 @@
+/* FaxClip workspace: onboarding, personas, proxies, extended accounts/devices (QUICON-style, no sales). */
+(function(){
+const SLOT={morning:"Утро",afternoon:"День",evening:"Вечер",night:"Ночь"};
+const MODE={young:"Молодой",warming:"Прогрев",hot:"Горячий",dormant:"Спящий"};
+const ASTATUS={draft:"Черновик",pending:"В ожидании",registered:"Зарегистрирован",login:"В системе",logout:"Вышел",blocked:"Заблокирован",archived:"Архив"};
+const PSTATUS={active:"Активна",blocked:"Заблокирована",suspended:"Приостановлена",archived:"Архив"};
+const XSTATUS={draft:"Не проверен",active:"Работает",error:"Не работает",archived:"Архив"};
+const LOGIN={username:"Имя пользователя",email:"Email",phone_number:"Номер телефона"};
+const PERS={creative:"Креативный",empathetic:"Эмпатичный",analytical:"Аналитик",energetic:"Энергичный",calm:"Спокойный",humorous:"С юмором",expert:"Эксперт"};
+const opts=(m,v,empty)=>(empty!==undefined?`<option value="">${empty}</option>`:"")+Object.entries(m).map(([k,l])=>`<option value="${k}" ${k===v?"selected":""}>${l}</option>`).join("");
+const val=id=>{const e=document.getElementById(id);return e?(e.type==="checkbox"?e.checked:e.value.trim()):""};
+const fail=(e)=>{const b=document.getElementById("wsErr");if(b){b.textContent=e.message||String(e);b.style.display="block"}else alert(e.message||e)};
+const errBox='<p id="wsErr" class="ws-err" style="display:none"></p>';
+let after=null; // what to re-render after a modal save
+const rerender=async()=>{closeModal();if(after)await after()};
+
+/* ---------- Proxies ---------- */
+async function proxies(){after=proxies;const [p,d]=await Promise.all([api("/proxies"),api("/devices")]);
+shell("Прокси","Отдельный IP для каждого телефона",`<div class="card"><div class="row"><b>Все прокси</b><button class="btn" onclick="wsProxyForm()">+ Добавить прокси</button></div>
+<p class="muted">Одно устройство — один прокси. Прокси ставится на телефон (например, через приложение VPN/прокси). Кнопка «Проверить» показывает, жив ли прокси и какой у него внешний IP.</p>
+<table class="table"><thead><tr><th>Прокси</th><th>Устройство</th><th>Статус</th><th>Проверка</th><th></th></tr></thead><tbody>${p.map(x=>`<tr><td><b>${esc(x.proxy_ip)}:${x.proxy_port}</b><br><span class="muted">${x.proxy_username?esc(x.proxy_username)+" · пароль сохранён":"без логина"}</span></td><td>${esc(x.device_name||"Не назначено")}</td><td><span class="pill"><i class="dot ${x.status==="active"?"":"red"}"></i>${XSTATUS[x.status]||x.status}</span></td><td class="muted">${x.last_check_at?`${esc(x.last_check_message||"")}${x.last_check_egress_ip?"<br>IP: "+esc(x.last_check_egress_ip):""}${x.last_check_latency_ms?" · "+x.last_check_latency_ms+" мс":""}`:"Не проверялся"}</td><td><button class="btn secondary" onclick="wsProxyCheck('${x.id}',this)">Проверить</button> <button class="btn secondary" onclick="wsProxyForm('${x.id}')">Изменить</button> <button class="btn secondary" onclick="wsProxyDelete('${x.id}')">Удалить</button></td></tr>`).join("")||`<tr><td colspan="5" class="empty">Прокси пока нет</td></tr>`}</tbody></table></div>`)}
+window.wsProxyForm=async function(id){const [list,devs]=await Promise.all([api("/proxies"),api("/devices")]);const x=list.find(p=>p.id===id)||{};const busy=new Set(list.filter(p=>p.id!==id&&p.device_id).map(p=>p.device_id));
+modalBox(`<h3>${id?"Изменить прокси":"Новый прокси"}</h3><div class="form"><div class="formgrid"><label>IP или домен<input id="xi" value="${esc(x.proxy_ip||"")}" placeholder="45.12.34.56"></label><label>Порт<input id="xp" inputmode="numeric" value="${esc(x.proxy_port||"")}" placeholder="8000"></label></div>
+<div class="formgrid"><label>Логин<input id="xu" value="${esc(x.proxy_username||"")}" autocomplete="off"></label><label>Пароль<input id="xw" type="password" autocomplete="new-password" placeholder="${x.has_password?"сохранён — оставьте пустым":""}"></label></div>
+<label>Устройство<select id="xd"><option value="">Не назначено</option>${devs.filter(v=>v.status!=="REVOKED").map(v=>`<option value="${v.id}" ${v.id===x.device_id?"selected":""} ${busy.has(v.id)?"disabled":""}>${esc(v.name)}${busy.has(v.id)?" — занято":""}</option>`).join("")}</select></label>
+<p class="muted">Берите прокси страны, куда публикуете. Не берите «датацентр» и прокси с оплатой за гигабайты.</p>${errBox}
+<div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="wsProxySave('${id||""}')">Сохранить</button></div></div>`)}
+window.wsProxySave=async function(id){try{const b={proxy_ip:val("xi"),proxy_port:val("xp"),proxy_username:val("xu"),device_id:val("xd")||null};const w=val("xw");if(w||!id)b.proxy_password=w;await api(id?"/proxies/"+id:"/proxies",{method:id?"PATCH":"POST",body:JSON.stringify(b)});await rerender()}catch(e){fail(e)}};
+window.wsProxyCheck=async function(id,btn){btn.disabled=true;btn.textContent="Проверяем…";try{const r=await api(`/proxies/${id}/check`,{method:"POST",body:"{}"});modalBox(`<h3>${r.ok?"Прокси работает":"Прокси не работает"}</h3><p>${esc(r.message)}</p>${r.egress_ip?`<p>Внешний IP: <b>${esc(r.egress_ip)}</b></p>`:""}${r.latency_ms?`<p class="muted">Ответ за ${r.latency_ms} мс</p>`:""}<div class="row"><button class="btn" onclick="wsAfter()">Понятно</button></div>`)}catch(e){alert(e.message)}finally{btn.disabled=false;btn.textContent="Проверить"}};
+window.wsProxyDelete=async function(id){if(!confirm("Удалить прокси?"))return;await api("/proxies/"+id,{method:"DELETE"});if(after)await after()};
+window.wsAfter=rerender;
+
+/* ---------- Personas ---------- */
+async function personas(){after=personas;const p=await api("/personas");
+shell("Персоны","Характер, от имени которого работает аккаунт",`<div class="card"><div class="row"><b>Все персоны</b><button class="btn" onclick="wsPersonaForm()">+ Создать персону</button></div>
+<p class="muted">Одна персона на одно устройство. Интересы и слоты активности определяют, что и когда агент делает в аккаунтах этой персоны.</p>
+<table class="table"><thead><tr><th>Персона</th><th>Устройство</th><th>Интересы</th><th>Активность</th><th>Статус</th><th></th></tr></thead><tbody>${p.map(x=>`<tr><td><b>${esc(x.name)}</b><br><span class="muted">${esc([x.gender==="male"?"Муж.":x.gender==="female"?"Жен.":"",x.country,x.city].filter(Boolean).join(" · "))}</span></td><td>${esc(x.device_name||"—")}</td><td>${x.interests.map(i=>`<span class="pill">${esc(i.tag)}</span>`).join(" ")||"—"}</td><td>${x.preferred_times.map(t=>SLOT[t.time_slot]).join(", ")||"—"}</td><td><span class="pill"><i class="dot ${x.status==="active"?"":"red"}"></i>${PSTATUS[x.status]||x.status}</span><br><span class="muted">Аккаунтов: ${x.accounts}</span></td><td><button class="btn secondary" onclick="wsPersonaForm('${x.id}')">Изменить</button> <button class="btn secondary" onclick="wsPersonaDelete('${x.id}')">Удалить</button></td></tr>`).join("")||`<tr><td colspan="6" class="empty">Персон пока нет</td></tr>`}</tbody></table></div>`)}
+window.wsPersonaForm=async function(id){const [list,devs]=await Promise.all([api("/personas"),api("/devices")]);const x=list.find(p=>p.id===id)||{interests:[],preferred_times:[],status:"active"};const busy=new Set(list.filter(p=>p.id!==id&&p.status!=="archived").map(p=>p.device_id));
+const ints=[...x.interests];while(ints.length<5)ints.push({tag:"",weight:3});const tm=Object.fromEntries(x.preferred_times.map(t=>[t.time_slot,t.weight]));
+modalBox(`<h3>${id?"Изменить персону":"Новая персона"}</h3><div class="form">
+<label>Полное имя<input id="pn" value="${esc(x.name||"")}" placeholder="101 Ден — начните с номера телефона"></label>
+<div class="formgrid"><label>Email<input id="pe" value="${esc(x.email||"")}"></label><label>Телефон<input id="pph" value="${esc(x.phone||"")}"></label></div>
+<div class="formgrid"><label>Пол<select id="pg">${opts({male:"Мужской",female:"Женский"},x.gender,"Не указан")}</select></label><label>День рождения<input id="pb" type="date" value="${esc(x.date_of_birth||"")}"></label></div>
+<div class="formgrid"><label>Страна<input id="pc" value="${esc(x.country||"")}" placeholder="Россия"></label><label>Язык<input id="pl" value="${esc(x.language||"")}" placeholder="Русский"></label></div>
+<div class="formgrid"><label>Город<input id="pci" value="${esc(x.city||"")}"></label><label>Устройство<select id="pd"><option value="">Выберите устройство</option>${devs.filter(v=>v.status!=="REVOKED").map(v=>`<option value="${v.id}" ${v.id===x.device_id?"selected":""} ${busy.has(v.id)?"disabled":""}>${esc(v.name)}${busy.has(v.id)?" — занято":""}</option>`).join("")}</select></label></div>
+<div class="formgrid"><label>Тип личности<select id="pt">${opts(PERS,x.personality,"Не выбран")}</select></label><label>Статус<select id="ps">${opts(PSTATUS,x.status)}</select></label></div>
+<b>Интересы</b><p class="muted">Не больше пяти, все в вашей нише. Вес 1–5 — приоритет.</p>${ints.slice(0,5).map((i,k)=>`<div class="formgrid ws-pair"><input id="pi${k}" value="${esc(i.tag)}" placeholder="Интерес ${k+1}"><input id="piw${k}" type="number" min="1" max="5" value="${i.weight}"></div>`).join("")}
+<b>Слоты активности</b><p class="muted">Когда агент выходит работать. Вес 5 включается чаще, чем 3.</p>${Object.entries(SLOT).map(([s,l])=>`<div class="formgrid ws-pair"><label class="ws-check"><input type="checkbox" id="ts_${s}" ${tm[s]?"checked":""}> ${l}</label><input id="tw_${s}" type="number" min="1" max="5" value="${tm[s]||3}"></div>`).join("")}
+<label>Контекст для ИИ (кто эта персона и как пишет)<textarea id="pno" placeholder="Например: Ден, 27 лет, механик из Казани, пишет коротко и с юмором">${esc(x.notes||"")}</textarea></label>
+<label>Запрещённые темы<input id="pdk" value="${esc(x.denied_keywords||"")}" placeholder="политика, религия, NSFW"></label>
+<label class="ws-check"><input type="checkbox" id="ptn" ${x.target_by_niche?"checked":""}> Подбирать контент только в нише персоны</label>${errBox}
+<div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="wsPersonaSave('${id||""}')">${id?"Сохранить":"Создать персону"}</button></div></div>`)}
+window.wsPersonaSave=async function(id){try{const b={name:val("pn"),email:val("pe"),phone:val("pph"),gender:val("pg"),date_of_birth:val("pb")||null,country:val("pc"),language:val("pl"),city:val("pci"),device_id:val("pd"),personality:val("pt"),status:val("ps"),notes:val("pno"),denied_keywords:val("pdk"),target_by_niche:val("ptn"),
+interests:[0,1,2,3,4].map(k=>({tag:val("pi"+k),weight:+val("piw"+k)||3})).filter(i=>i.tag),preferred_times:Object.keys(SLOT).filter(s=>val("ts_"+s)).map(s=>({time_slot:s,weight:+val("tw_"+s)||3}))};
+if(!b.device_id)throw new Error("Выберите устройство");await api(id?"/personas/"+id:"/personas",{method:id?"PATCH":"POST",body:JSON.stringify(b)});await rerender()}catch(e){fail(e)}};
+window.wsPersonaDelete=async function(id){if(!confirm("Удалить персону? Аккаунты останутся, но без персоны."))return;await api("/personas/"+id,{method:"DELETE"});if(after)await after()};
+
+/* ---------- Accounts (extended) ---------- */
+async function wsAccounts(){after=wsAccounts;const a=await api("/account-profiles");
+shell("Аккаунты","Аккаунты на телефонах, персоны и режимы прогрева",`<div class="card"><div class="row"><b>Все аккаунты</b><button class="btn" onclick="wsAccountForm()">+ Добавить аккаунт</button></div>
+<table class="table"><thead><tr><th>Аккаунт</th><th>Персона</th><th>Устройство</th><th>Режим</th><th>Статус</th><th></th></tr></thead><tbody>${a.map(x=>`<tr><td><b>${esc(x.username||"Без username")}</b><br><span class="muted">${esc(x.platform)}${x.channel_name?" · "+esc(x.channel_name):""}</span></td><td>${esc(x.persona_name||"—")}</td><td>${esc(x.device_name||"—")}</td><td><span class="pill">${MODE[x.work_mode]}</span></td><td><span class="pill"><i class="dot ${["login","registered"].includes(x.status)?"":"red"}"></i>${ASTATUS[x.status]||x.status}</span></td><td><button class="btn secondary" onclick="wsAccountForm('${x.id}')">Профиль</button> <button class="btn secondary" onclick="assignDevice('${x.id}')">Устройство</button></td></tr>`).join("")||`<tr><td colspan="6" class="empty">Аккаунтов пока нет</td></tr>`}</tbody></table></div>`)}
+window.wsAccountForm=async function(id){const [list,pers]=await Promise.all([api("/account-profiles"),api("/personas")]);const x=list.find(a=>a.id===id)||{platform:"TikTok",work_mode:"young",status:"login",login_method:"username"};
+modalBox(`<h3>${id?"Профиль аккаунта":"Добавить аккаунт"}</h3><div class="form">
+<div class="formgrid"><label>Сеть<select id="ac" ${id?"disabled":""}>${["TikTok","Instagram","YouTube","VK"].map(p=>`<option ${p===x.platform?"selected":""}>${p}</option>`).join("")}</select></label><label>Имя пользователя<input id="au2" value="${esc(x.username||"")}" ${id?"disabled":""} placeholder="@username — с учётом регистра"></label></div>
+<div class="formgrid"><label>Персона<select id="apn"><option value="">Без персоны</option>${pers.map(p=>`<option value="${p.id}" ${p.id===x.persona_id?"selected":""}>${esc(p.name)}${p.device_name?" · "+esc(p.device_name):""}</option>`).join("")}</select></label><label>Метод входа<select id="alm">${opts(LOGIN,x.login_method)}</select></label></div>
+<div class="formgrid"><label>Режим<select id="awm">${opts(MODE,x.work_mode)}</select></label><label>Статус<select id="ast">${opts(ASTATUS,x.status)}</select></label></div>
+<label>Название канала<input id="ach" value="${esc(x.channel_name||"")}"></label>
+<label>Заметки для ИИ (о чём этот аккаунт)<textarea id="ano" placeholder="Например: обзоры запчастей для японских авто, дружелюбный тон">${esc(x.notes||"")}</textarea></label>
+<label>Ключевые слова для поиска (через запятую)<input id="akw" value="${esc(x.search_keywords||"")}" placeholder="ремонт авто, запчасти, тюнинг"></label>
+<p class="muted">Пароль и коды 2FA FaxClip не хранит — аккаунт уже открыт в приложении на телефоне.</p>${errBox}
+<div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="wsAccountSave('${id||""}')">Сохранить</button></div></div>`)}
+window.wsAccountSave=async function(id){try{if(!val("akw"))throw new Error("Укажите ключевые слова для поиска через запятую");let aid=id;
+if(!aid){if(!val("au2"))throw new Error("Укажите имя пользователя");const per=(await api("/personas")).find(p=>p.id===val("apn"));aid=(await api("/accounts",{method:"POST",body:JSON.stringify({platform:val("ac"),username:val("au2"),device_id:per?.device_id||null})})).id}
+await api("/account-profiles/"+aid,{method:"PUT",body:JSON.stringify({persona_id:val("apn")||null,login_method:val("alm"),work_mode:val("awm"),status:val("ast"),channel_name:val("ach"),notes:val("ano"),search_keywords:val("akw")})});await rerender()}catch(e){fail(e)}};
+
+/* ---------- Devices (settings: name, locale, timezone, proxy) ---------- */
+const origDevices=window.devices;
+async function wsDevices(){after=wsDevices;await origDevices();const prof=await api("/device-profiles");
+document.querySelectorAll('#view button[onclick^="connectDevice("]').forEach(b=>{const id=(b.getAttribute("onclick").match(/'([^']+)'/)||[])[1];const p=prof.find(x=>x.id===id);if(!p)return;
+const info=document.createElement("div");info.className="muted";info.style.marginTop="10px";info.innerHTML=`Персона: ${esc(p.persona_name||"—")} · Прокси: ${p.proxy_ip?esc(p.proxy_ip+":"+p.proxy_port):"—"}<br>Локаль: ${esc(p.locale||"—")} · Часовой пояс: ${esc(p.timezone||"—")}`;
+const btn=document.createElement("button");btn.className="btn secondary";btn.style.marginTop="12px";btn.style.marginLeft="6px";btn.textContent="Настройки";btn.onclick=()=>wsDeviceForm(id);b.before(info);b.after(btn)})}
+window.wsDeviceForm=async function(id){const [prof,px]=await Promise.all([api("/device-profiles"),api("/proxies")]);const x=prof.find(p=>p.id===id)||{};const tz=Intl.supportedValuesOf?Intl.supportedValuesOf("timeZone"):["Europe/Moscow"];
+modalBox(`<h3>Настройки устройства</h3><div class="form"><label>Название<input id="dvn" value="${esc(x.name||"")}" placeholder="101"></label>
+<div class="formgrid"><label>Локаль (язык телефона)<select id="dvl">${opts({"ru-RU":"Русский (ru-RU)","en-US":"English (en-US)","uk-UA":"Українська (uk-UA)","kk-KZ":"Қазақ (kk-KZ)","de-DE":"Deutsch (de-DE)","es-ES":"Español (es-ES)"},x.locale,"Не указана")}</select></label>
+<label>Часовой пояс<select id="dvt"><option value="">Не указан</option>${tz.map(z=>`<option ${z===x.timezone?"selected":""}>${z}</option>`).join("")}</select></label></div>
+<label>Прокси<select id="dvp"><option value="">Не назначен</option>${px.map(p=>`<option value="${p.id}" ${p.id===x.proxy_id?"selected":""} ${p.device_id&&p.device_id!==id?"disabled":""}>${esc(p.proxy_ip+":"+p.proxy_port)}${p.device_id&&p.device_id!==id?" — занят":""}</option>`).join("")}</select></label>
+<p class="muted">Название лучше ставить цифрами: 101, 102, 103. По часовому поясу телефон будет публиковать.</p>${errBox}
+<div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="wsDeviceSave('${id}')">Сохранить</button></div></div>`)}
+window.wsDeviceSave=async function(id){try{await api("/device-profiles/"+id,{method:"PUT",body:JSON.stringify({name:val("dvn"),locale:val("dvl"),timezone:val("dvt"),proxy_id:val("dvp")||null})});await rerender()}catch(e){fail(e)}};
+
+/* ---------- Onboarding ---------- */
+const STEPS=[{k:"proxies",t:"Прокси",opt:true},{k:"devices",t:"Устройства"},{k:"personas",t:"Персоны"},{k:"accounts",t:"Аккаунты"},{k:"done",t:"Готово"}];
+let step=null;
+async function onboarding(){after=onboarding;const s=await api("/onboarding");const c=s.counts;
+const ok=k=>k==="proxies"?(c.proxies>0||s.proxies_skipped):c[k]>0;
+if(step===null){step=STEPS.findIndex(x=>x.k!=="done"&&!ok(x.k));if(step<0)step=STEPS.length-1}
+const cur=STEPS[step];
+const bar=`<div class="ws-steps">${STEPS.map((x,i)=>`<div class="ws-step ${i<step?"done":i===step?"cur":""}"><span>${i<step?"✓":i+1}</span>${x.t}</div>`).join("")}</div><p class="muted">Шаг ${step+1} из ${STEPS.length}</p>`;
+let body="";
+if(cur.k==="proxies"){const p=await api("/proxies");body=`<h3>Добавьте прокси <span class="pill">Необязательно</span></h3><p class="muted">Прокси даёт телефону отдельный IP нужной страны. Шаг можно пропустить и добавить прокси позже.</p>${p.map(x=>`<div class="item">${esc(x.proxy_ip)}:${x.proxy_port} · ${XSTATUS[x.status]}</div>`).join("")||'<div class="empty">Прокси пока нет</div>'}<p>Добавлено: ${c.proxies}</p><button class="btn secondary" onclick="wsProxyForm()">+ Добавить прокси</button>`}
+if(cur.k==="devices"){const d=await api("/devices");body=`<h3>Подключите первое устройство</h3><p class="muted">Телефон подключается к Mac по USB. Нажмите «Добавить устройство» и выполните команду в Терминале. Нужно хотя бы одно устройство.</p>${d.filter(x=>x.status!=="REVOKED").map(x=>`<div class="item">📱 ${esc(x.name)} · ${x.status==="ONLINE"?"Подключено":"Не подключено"}</div>`).join("")||'<div class="empty">Устройств пока нет</div>'}<p>Добавлено: ${c.devices}</p><button class="btn secondary" onclick="addDevice()">+ Добавить устройство</button> <button class="btn secondary" onclick="wsOnb()">Обновить</button>`}
+if(cur.k==="personas"){const p=await api("/personas");body=`<h3>Создайте персону</h3><p class="muted">Персона — от чьего имени работает аккаунт: интересы, расписание, характер. Нужна минимум одна.</p>${p.map(x=>`<div class="item">${esc(x.name)} · ${esc(x.device_name||"")}</div>`).join("")||'<div class="empty">Персон пока нет</div>'}<p>Добавлено: ${c.personas}</p><button class="btn secondary" onclick="wsPersonaForm()">+ Создать персону</button>`}
+if(cur.k==="accounts"){const a=await api("/account-profiles");body=`<h3>Привяжите аккаунт</h3><p class="muted">Привяжите аккаунт соцсети к персоне. Нужен минимум один аккаунт.</p>${a.map(x=>`<div class="item">${esc(x.platform)} · ${esc(x.username)} ${x.persona_name?"· "+esc(x.persona_name):""} ${x.id&&!x.search_keywords?`<button class="btn secondary" onclick="wsAccountForm('${x.id}')">Дополнить профиль</button>`:""}</div>`).join("")||'<div class="empty">Аккаунтов пока нет</div>'}<p>Добавлено: ${c.accounts}</p><button class="btn secondary" onclick="wsAccountForm()">+ Добавить аккаунт</button>`}
+if(cur.k==="done")body=`<h3>Всё готово!</h3><p class="muted">Рабочее пространство настроено.</p><div class="list"><div class="item">Прокси: ${c.proxies}</div><div class="item">Устройства: ${c.devices}</div><div class="item">Персоны: ${c.personas}</div><div class="item">Аккаунты: ${c.accounts}</div></div><button class="btn" style="margin-top:14px" onclick="wsFinish()">Перейти на главную</button>`;
+const canNext=cur.k==="done"?false:ok(cur.k);
+const foot=cur.k==="done"?"":`<div class="row" style="margin-top:18px">${step>0?'<button class="close" onclick="wsStep(-1)">Назад</button>':"<span></span>"}<div>${cur.k==="proxies"&&c.proxies===0?'<button class="btn secondary" onclick="wsSkipProxies()">Пропустить</button> ':""}<button class="btn" ${canNext?"":"disabled"} onclick="wsStep(1)">${cur.k==="accounts"?"Завершить":"Продолжить"}</button></div></div>`;
+shell("Настройка","Несколько шагов, чтобы запустить FaxClip",`<div class="card ws-onb">${bar}${body}${foot}</div>`)}
+window.wsOnb=()=>onboarding();
+window.wsStep=async d=>{step=Math.max(0,Math.min(STEPS.length-1,step+d));await onboarding()};
+window.wsSkipProxies=async()=>{await api("/onboarding",{method:"POST",body:JSON.stringify({skip_proxies:true})});step=1;await onboarding()};
+window.wsFinish=async()=>{try{await api("/onboarding",{method:"POST",body:JSON.stringify({finish:true})});document.querySelector('nav [data-page="onboarding"]')?.remove();goPage("dashboard")}catch(e){alert(e.message)}};
+
+/* ---------- wiring ---------- */
+Object.assign(routes,{onboarding,personas,proxies,accounts:wsAccounts,devices:wsDevices});
+window.accounts=wsAccounts;window.devices=wsDevices;window.addAccount=()=>wsAccountForm();
+const navEl=document.querySelector("nav");const mk=(page,label,svg,beforePage)=>{const b=document.createElement("button");b.type="button";b.className="nav-item";b.dataset.page=page;b.innerHTML=`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${svg}</svg><span>${label}</span>`;b.onclick=()=>goPage(page);const ref=navEl.querySelector(`[data-page="${beforePage}"]`);ref?ref.before(b):navEl.append(b)};
+mk("personas","Персоны",'<circle cx="9" cy="8" r="4"/><path d="M1 21a8 8 0 0 1 16 0"/><path d="M17 4a4 4 0 0 1 0 8m6 9a8 8 0 0 0-5-7.4"/>',"accounts");
+mk("proxies","Прокси",'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',"publishing");
+api("/onboarding").then(s=>{if(!s.done){mk("onboarding","Настройка",'<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1"/><circle cx="12" cy="12" r="3"/>',"dashboard");goPage("onboarding")}}).catch(()=>{});
+})();

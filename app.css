@@ -405,3 +405,14 @@ main>header::after{content:"";position:absolute;left:0;bottom:-1px;width:120px;h
 .hero-copy{min-width:0}
 .hero>.hero-art{position:relative}
 input[type=checkbox]{accent-color:var(--lime);width:18px;height:18px;vertical-align:-3px;margin-right:8px}
+/* workspace (onboarding, personas, proxies) */
+.ws-steps{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.ws-step{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-size:13px;color:#8d958f;border:1px solid rgba(255,255,255,.08)}
+.ws-step span{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.08);font-size:12px;font-weight:700}
+.ws-step.cur{color:var(--text);border-color:var(--lime-line)}.ws-step.cur span{background:var(--lime);color:#0b0d0c}
+.ws-step.done{color:#cfe8a0}.ws-step.done span{background:rgba(198,255,61,.25);color:var(--lime)}
+.ws-onb h3{margin:18px 0 6px}.ws-onb .item{margin:6px 0}
+.ws-err{color:#ff8a8a;background:rgba(255,80,80,.1);border:1px solid rgba(255,80,80,.3);padding:10px 12px;border-radius:12px}
+.form .ws-check{display:flex;align-items:center;gap:10px}.form .ws-check input{width:auto;min-height:0;margin:0}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.form .ws-pair{grid-template-columns:1fr 96px;align-items:center;margin:4px 0}.form .ws-pair input,.form .ws-pair label{margin-top:0}

@@ -136,6 +136,8 @@ def init_db():
     if "period" not in cols:c.execute("alter table tasks add column period TEXT DEFAULT 'DAY'")
     if "period_start" not in cols:c.execute("alter table tasks add column period_start TEXT")
     if "period_end" not in cols:c.execute("alter table tasks add column period_end TEXT")
+    from workspace import SCHEMA as WS_SCHEMA
+    c.executescript(WS_SCHEMA)
     c.commit(); c.close()
     from maintenance import apply_bootstrap
     apply_bootstrap(conn,now)
@@ -157,7 +159,7 @@ def home():
 
 @app.get("/static/<path:name>")
 def static_files(name):
-    if name not in {"app.css","app.js"}: return jsonify(error="not found"),404
+    if name not in {"app.css","app.js","workspace.js"}: return jsonify(error="not found"),404
     return send_from_directory(BASE,name)
 
 @app.get("/uploads/<path:name>")
@@ -391,6 +393,8 @@ from adb_backend import register_adb
 register_adb(app,conn,now,UPLOAD)
 from maintenance import register_maintenance
 register_maintenance(app,conn,now,UPLOAD)
+from workspace import register_workspace
+register_workspace(app,conn,now,audit)
 
 if __name__=="__main__":
     init_db()

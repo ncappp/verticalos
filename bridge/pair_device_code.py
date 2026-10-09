@@ -62,7 +62,7 @@ def resume_manager(root):
 def code_mode_source(raw):
  digest=hashlib.sha256(raw).hexdigest()
  if digest in ['a2d6ce27451e848116defe6bea7bcca3c21e73fba4e0ae4670f736cbfbd07643']:return raw
- if digest not in ['67de2054ff592f8cc718981a3717573ef0f2299e994813da37355dca7a1eb67d']:raise RuntimeError('Версия менеджера не распознана. Исходники и данные не заменены.')
+ if digest not in ['67de2054ff592f8cc718981a3717573ef0f2299e994813da37355dca7a1eb67d','9dcca76145463ffc42496c71f5da8c424f6e2579a4cb277515ad3ed9f1734f6a']:raise RuntimeError('Версия менеджера не распознана. Исходники и данные не заменены.')
  text=raw.decode()
  anchor="for file in downloads.glob('faxclip-connect-*.json'):"
  if text.count(anchor)!=1:raise RuntimeError('Неподдерживаемая версия менеджера; ничего не изменено.')

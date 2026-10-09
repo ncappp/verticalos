@@ -82,3 +82,23 @@ class MaintenanceTests(unittest.TestCase):
   with patch.dict(os.environ,{'FAXCLIP_BOOTSTRAP_B64':'NOT_VALID_BASE64'}):
    with self.assertRaises(RuntimeError):apply_bootstrap(conn,lambda:'now')
 if __name__=='__main__':unittest.main()
+
+class ConfirmLinkTests(unittest.TestCase):
+ def test_owner_link_completes_submitted_review_and_unblocks_queue(self):
+  d,h=device();pub,_,_=new_job(d)
+  pid=pub.get('id') or pub.get('publication_id')
+  with conn() as c:
+   jid=c.execute('select id from ui_jobs where publication_id=?',(pid,)).fetchone()['id']
+   c.execute("update ui_jobs set status='NEEDS_REVIEW',phase='SUBMITTED' where id=?",(jid,))
+   c.execute("update publications set status='NEEDS_REVIEW',error='LINK_COPIED_NOT_READ' where id=?",(pid,))
+  self.assertEqual(request('/publications/'+pid+'/confirm-link','POST',{'url':'https://example.com/x'}).status_code,400)
+  r=request('/publications/'+pid+'/confirm-link','POST',{'url':'https://www.tiktok.com/@redmaagi/video/7412345678901234567?is_from_webapp=1'})
+  self.assertEqual(r.status_code,200,r.get_json())
+  with conn() as c:
+   self.assertEqual(c.execute('select status from ui_jobs where id=?',(jid,)).fetchone()['status'],'DONE')
+   self.assertEqual(c.execute('select external_id from publications where id=?',(pid,)).fetchone()['external_id'],'https://www.tiktok.com/@redmaagi/video/7412345678901234567')
+  self.assertEqual(request('/publications/'+pid+'/confirm-link','POST',{'url':'https://www.tiktok.com/@redmaagi/video/7412345678901234567'}).get_json().get('existing'),True)
+ def test_link_rejected_before_submission(self):
+  d,h=device();pub,_,_=new_job(d);pid=pub.get('id') or pub.get('publication_id')
+  with conn() as c:c.execute("update ui_jobs set status='NEEDS_REVIEW',phase='READY' where publication_id=?",(pid,))
+  self.assertEqual(request('/publications/'+pid+'/confirm-link','POST',{'url':'https://www.tiktok.com/@redmaagi/video/7412345678901234568'}).status_code,409)

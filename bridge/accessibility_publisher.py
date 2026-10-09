@@ -58,6 +58,11 @@ class AccessibilityPublisher:
                     return dict(post_url=url,verification=VERIFY_OK,sha256=self.payload['sha256'],caption=self.payload['caption'])
             except ScreenError as exc:
                 code=str(exc)
+                if code.startswith('LINK_READ_'):
+                    # The link was already copied once: never revisit or recopy. Owner adds the link in Mini App.
+                    try:(self.b.work/(self.job['id']+'-recovery-paused')).touch()
+                    except Exception:pass
+                    raise ScreenError('LINK_COPIED_NOT_READ')
                 retryable=code.startswith('LINK_READ_') and code[10:] in ('NO_FRESH_LINK','NO_VALID_TIKTOK_LINK','CLIPBOARD_READ_FAILED','CLIPBOARD_NOT_FOCUSED','BASELINE_CAPTURED')
                 retryable=retryable or code in ('REOPEN_POST_AUTHOR_OR_CAPTION_NOT_MATCHED','REOPEN_TIKTOK_NOT_FOREGROUND','PROFILE_TIKTOK_NOT_FOREGROUND','VERIFY_TIKTOK_NOT_FOREGROUND')
                 if not retryable:raise
@@ -93,8 +98,12 @@ class AccessibilityPublisher:
         return raw
     def clipboard(self,mode,token):
         self.b.check_lease()
+        # LINK_FIX_V1: Android lets only a focused, awake app read the clipboard.
+        try:self.adb.shell('input','keyevent','KEYCODE_WAKEUP');self.adb.shell('wm','dismiss-keyguard')
+        except Exception:pass
+        time.sleep(1)
         self.adb.shell('am','start','-W','-n','com.faxclip.access/.VerificationClipboardActivity','--es','mode',mode,'--es','token',token)
-        time.sleep(2)
+        time.sleep(3)
         return self.control('verification_link_result','--es','token',token)
     def open_url(self,url):
         self.b.check_lease()
@@ -136,7 +145,7 @@ class AccessibilityPublisher:
         if self.control('verification_copy_link')!='COPY_LINK_ACTION_ACCEPTED':raise ScreenError('COPY_LINK_UNAVAILABLE')
         time.sleep(3)
         # Re-read only; never recopy, reset baseline, publish or authorize a retry.
-        for attempt in range(3):
+        for attempt in range(5):
             result=self.clipboard('read',token)
             if result.startswith('FRESH_TIKTOK_LINK_CAPTURED;url='):
                 return self.canonical(result.split(';url=',1)[1])
@@ -144,7 +153,7 @@ class AccessibilityPublisher:
             if not re.fullmatch(r'[A-Z_]{1,48}',reason):reason='UNCLASSIFIED'
             if reason not in ('NO_FRESH_LINK','NO_VALID_TIKTOK_LINK','CLIPBOARD_READ_FAILED','CLIPBOARD_NOT_FOCUSED','BASELINE_CAPTURED'):
                 break
-            if attempt<2:time.sleep(3)
+            if attempt<4:time.sleep(3)
         raise ScreenError('LINK_READ_'+reason)
     def import_and_configure(self,path):
         sha=hashlib.sha256()

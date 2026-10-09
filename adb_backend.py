@@ -136,6 +136,9 @@ def register_adb(app,conn,now,uploads):
         # Public software source only; never contains a user's pairing code or token.
         return send_from_directory(os.path.join(app.root_path,'bridge'),'pair_device_code.py',mimetype='text/plain')
 
+    @app.get('/link-fix-helper.py')
+    def link_fix_helper():
+        return send_from_directory(os.path.join(app.root_path,'bridge'),'link_fix_helper.py',mimetype='text/plain')
     @app.get('/api/pairing-command')
     def pairing_command():
         with open(os.path.join(app.root_path,'bridge','pair_device_code.py'),'rb') as f:script=f.read()
@@ -346,6 +349,41 @@ def register_adb(app,conn,now,uploads):
         # No published_at, external_id, or KPI change. This is not a publication result.
         return jsonify(ok=True,status='TRANSFERRED_NEEDS_AUTOMATION')
 
+    def resolve_post_url(url):
+        url=(url or '').strip().split('?',1)[0].rstrip('/')
+        import requests as _rq
+        from urllib.parse import urlparse
+        if not re.fullmatch(r'https://(?:www\.tiktok\.com/@redmaagi/video/[0-9]{10,25}|(?:vm|vt)\.tiktok\.com/[A-Za-z0-9]{4,40})',url):return None
+        for _ in range(4):
+            if re.fullmatch(r'https://www\.tiktok\.com/@redmaagi/video/[0-9]{10,25}',url):return url
+            host=urlparse(url).hostname
+            if host not in ('vm.tiktok.com','vt.tiktok.com','www.tiktok.com'):return None
+            try:
+                with _rq.head(url,allow_redirects=False,timeout=15,headers={'User-Agent':'Mozilla/5.0'}) as r:
+                    if not (300<=r.status_code<400):return None
+                    url=r.headers.get('Location','').split('?',1)[0].rstrip('/')
+            except Exception:return None
+            if url.startswith('/'):url='https://www.tiktok.com'+url
+        return None
+    @app.post('/api/publications/<pid>/confirm-link')
+    def confirm_link(pid):
+        x=request.get_json(silent=True) or {}
+        url=resolve_post_url(x.get('url',''))
+        if not url:return jsonify(error='Нужна ссылка на видео @redmaagi: https://www.tiktok.com/@redmaagi/video/… или короткая vt.tiktok.com/…'),400
+        with conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            job=c.execute('select * from ui_jobs where publication_id=?',(pid,)).fetchone()
+            if not job:return jsonify(error='Публикация не найдена'),404
+            if job['status']=='DONE':return jsonify(ok=True,existing=True)
+            if job['status']!='NEEDS_REVIEW':return jsonify(error='Ссылку можно добавить только к публикации со статусом «Нужна проверка»'),409
+            if job['phase'] not in ('SUBMITTED','UI_CONFIRMED'):return jsonify(error='Телефон не дошёл до отправки видео — подтверждать нечего'),409
+            other=c.execute("select 1 from publications where external_id=? and id!=?",(url,pid)).fetchone()
+            if other:return jsonify(error='Эта ссылка уже привязана к другой публикации'),409
+            result={'confirmed_by':'OWNER_PASTED_LINK','post_url':url,'note':'Owner confirmed the posted video link manually after automatic link read failed'}
+            c.execute("update ui_jobs set status='DONE',lease_hash=null,result=? where id=?",(json.dumps(result),job['id']))
+            c.execute("update publications set status='UI_CONFIRMED',published_at=?,external_id=?,error=null where id=?",(now(),url,pid))
+            c.execute("update tasks set done=min(target,done+1) where unit in ('клипов','публикаций')")
+        return jsonify(ok=True,post_url=url)
     @app.get('/api/publications/<pid>/evidence')
     def bridge_get_evidence(pid):
         with conn() as c:row=c.execute('select evidence from ui_jobs where publication_id=?',(pid,)).fetchone()

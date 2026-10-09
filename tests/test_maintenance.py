@@ -102,3 +102,58 @@ class ConfirmLinkTests(unittest.TestCase):
   d,h=device();pub,_,_=new_job(d);pid=pub.get('id') or pub.get('publication_id')
   with conn() as c:c.execute("update ui_jobs set status='NEEDS_REVIEW',phase='READY' where publication_id=?",(pid,))
   self.assertEqual(request('/publications/'+pid+'/confirm-link','POST',{'url':'https://www.tiktok.com/@redmaagi/video/7412345678901234568'}).status_code,409)
+
+class DismissTests(unittest.TestCase):
+ def _job(self,phase,status='NEEDS_REVIEW'):
+  d,h=device();pub,_,_=new_job(d);pid=pub.get('id') or pub.get('publication_id')
+  with conn() as c:c.execute("update ui_jobs set status=?,phase=? where publication_id=?",(status,phase,pid))
+  return d,h,pid
+ def test_dismiss_unsubmitted_unblocks_queue_and_keeps_guard(self):
+  d,h,pid=self._job('READY')
+  self.assertTrue(request('/bridge/claim','POST',{},h).get_json().get('paused'))
+  self.assertEqual(request('/publications/'+pid+'/dismiss','POST',{}).status_code,200)
+  self.assertFalse(request('/bridge/claim','POST',{},h).get_json().get('paused'))
+  with conn() as c:self.assertTrue(c.execute('select 1 from ui_account_media_guard where publication_id=?',(pid,)).fetchone())
+ def test_dismiss_submitted_requires_confirmation(self):
+  d,h,pid=self._job('SUBMITTED')
+  r=request('/publications/'+pid+'/dismiss','POST',{});self.assertEqual(r.status_code,409);self.assertTrue(r.get_json().get('needs_confirm'))
+  self.assertEqual(request('/publications/'+pid+'/dismiss','POST',{'confirm':'NOT_PUBLISHED'}).status_code,200)
+ def test_running_cannot_be_dismissed(self):
+  d,h,pid=self._job('READY','RUNNING')
+  self.assertEqual(request('/publications/'+pid+'/dismiss','POST',{}).status_code,409)
+
+class TelegramBackupTests(unittest.TestCase):
+ def test_disabled_with_test_token_and_roundtrip_validation(self):
+  import tg_backup,sqlite3,tempfile,os
+  self.assertFalse(tg_backup.enabled())
+  fd,p=tempfile.mkstemp(suffix='.db');os.close(fd)
+  c=sqlite3.connect(p);c.execute('create table devices(id text)');c.execute("insert into devices values('x')");c.commit();c.close()
+  raw=tg_backup._snapshot(p);self.assertTrue(tg_backup._valid_db(raw));self.assertFalse(tg_backup._valid_db(b'garbage'))
+  self.assertTrue(tg_backup._has_state(p))
+ def test_restore_and_backup_with_fake_telegram(self):
+  import tg_backup,sqlite3,tempfile,os,gzip
+  from unittest.mock import patch
+  fd,src=tempfile.mkstemp(suffix='.db');os.close(fd)
+  c=sqlite3.connect(src);c.execute('create table devices(id text)');c.execute('create table accounts(id text)');c.execute("insert into devices values('dev1')");c.commit();c.close()
+  store={}
+  class R:
+   def __init__(s,j=None,content=b''):s._j=j;s.content=content
+   def json(s):return s._j
+   def raise_for_status(s):pass
+  def post(url,timeout=None,data=None,files=None):
+   m=url.rsplit('/',1)[1]
+   if m=='sendDocument':store['doc']=files['document'][1].read();store['name']=files['document'][0];return R({'ok':True,'result':{'message_id':7}})
+   if m=='pinChatMessage':store['pinned']=data['message_id'];return R({'ok':True,'result':True})
+   if m=='getChat':return R({'ok':True,'result':{'pinned_message':{'message_id':7,'document':{'file_name':store['name'],'file_id':'F'}}}})
+   if m=='getFile':return R({'ok':True,'result':{'file_path':'x'}})
+   return R({'ok':True,'result':True})
+  def get(url,timeout=None):return R(content=store['doc'])
+  env={'TELEGRAM_BOT_TOKEN':'123456:'+'A'*35,'TELEGRAM_ALLOWED_USER_IDS':'8784706094','FAXCLIP_TG_BACKUP':'1'}
+  with patch.dict(os.environ,env),patch.object(tg_backup.requests,'post',post),patch.object(tg_backup.requests,'get',get):
+   tg_backup._state.update(hash=None,message_id=None)
+   self.assertTrue(tg_backup.backup_now(src));self.assertEqual(store['pinned'],7)
+   self.assertFalse(tg_backup.backup_now(src)) # unchanged -> no resend
+   fd,dst=tempfile.mkstemp(suffix='.db');os.close(fd);os.unlink(dst)
+   self.assertTrue(tg_backup.restore_if_empty(dst))
+   c=sqlite3.connect(dst);self.assertEqual(c.execute('select id from devices').fetchone()[0],'dev1');c.close()
+   self.assertFalse(tg_backup.restore_if_empty(dst)) # never overwrites live data

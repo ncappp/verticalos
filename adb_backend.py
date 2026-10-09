@@ -329,6 +329,11 @@ def register_adb(app,conn,now,uploads):
         code=str((request.get_json(silent=True) or {}).get('code','UI_REVIEW'))
         if not re.fullmatch(r'[A-Z_]{1,60}',code):code='UI_REVIEW'
         with conn() as c:
+            if code in ('HELPER_PUBLICATION_PREVIOUSLY_ATTEMPTED','DUPLICATE_VIDEO_ALREADY_POSTED'):
+                try:
+                    payload=json.loads(row['payload'] or '{}')
+                    c.execute('insert or ignore into ui_account_media_guard values(?,?,?,?)',(payload['platform'],payload['username'],payload['sha256'],row['publication_id']))
+                except (KeyError,ValueError,TypeError):pass
             c.execute("update ui_jobs set status='NEEDS_REVIEW',error=? where id=?",(code,jid))
             c.execute("update publications set status='NEEDS_REVIEW',error=? where id=?",(code,row['publication_id']))
         return jsonify(ok=True)
@@ -384,6 +389,26 @@ def register_adb(app,conn,now,uploads):
             c.execute("update publications set status='UI_CONFIRMED',published_at=?,external_id=?,error=null where id=?",(now(),url,pid))
             c.execute("update tasks set done=min(target,done+1) where unit in ('клипов','публикаций')")
         return jsonify(ok=True,post_url=url)
+    @app.post('/api/publications/<pid>/dismiss')
+    def dismiss_publication(pid):
+        x=request.get_json(silent=True) or {}
+        with conn() as c:
+            c.execute('BEGIN IMMEDIATE')
+            job=c.execute('select * from ui_jobs where publication_id=?',(pid,)).fetchone()
+            if not job:return jsonify(error='Публикация не найдена'),404
+            if job['status'] in ('DONE','CANCELLED'):return jsonify(ok=True,existing=True)
+            if job['status'] not in ('NEEDS_REVIEW','QUEUED'):return jsonify(error='Телефон сейчас выполняет эту публикацию. Дождитесь окончания.'),409
+            submitted=job['phase'] in ('PUBLISH_STARTED','SUBMITTED','UI_CONFIRMED')
+            if submitted and x.get('confirm')!='NOT_PUBLISHED':
+                return jsonify(error='Телефон мог уже нажать «Опубликовать». Проверьте профиль в TikTok. Если видео вышло — нажмите «Вставить ссылку».',needs_confirm=True),409
+            payload=json.loads(job['payload'] or '{}')
+            if job['phase']!='NEW' and all(isinstance(payload.get(k),str) and payload.get(k) for k in ('platform','username','sha256')):
+                # Keep the duplicate guard: the same file is never sent to this account again.
+                c.execute('insert or ignore into ui_account_media_guard values(?,?,?,?)',(payload['platform'],payload['username'],payload['sha256'],pid))
+                c.execute('insert or ignore into ui_media_guard values(?,?,?,?)',(job['device_id'],payload['username'],payload['sha256'],pid))
+            c.execute("update ui_jobs set status='CANCELLED',lease_hash=null where id=?",(job['id'],))
+            c.execute("update publications set status='CANCELLED' where id=?",(pid,))
+        return jsonify(ok=True)
     @app.get('/api/publications/<pid>/evidence')
     def bridge_get_evidence(pid):
         with conn() as c:row=c.execute('select evidence from ui_jobs where publication_id=?',(pid,)).fetchone()

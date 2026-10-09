@@ -78,6 +78,8 @@ def telegram_guard():
         return jsonify(error=str(exc)),401
 
 def init_db():
+    import tg_backup
+    tg_backup.restore_if_empty(DB)
     c=conn()
     c.executescript("""
     PRAGMA foreign_keys=ON;
@@ -137,6 +139,7 @@ def init_db():
     c.commit(); c.close()
     from maintenance import apply_bootstrap
     apply_bootstrap(conn,now)
+    tg_backup.start(DB)
 
 @app.post("/api/local-session")
 def local_session():
@@ -382,7 +385,7 @@ def ingest():
 @app.get("/api/health")
 def health():
     c=conn(); c.execute("select 1").fetchone()
-    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",verification_recovery=1,device_setup=1,device_disconnect=1,device_pairing_code=1,storage="sqlite_local_requires_persistent_disk",queue_cleanup=1,enrollment_backup=1)
+    return jsonify(ok=True,database=True,ffmpeg=bool(shutil.which("ffmpeg")),time=now(),faxclip_version=14,phone_route="TIKTOK_REDMAAGI",verification_recovery=1,device_setup=1,device_disconnect=1,device_pairing_code=1,storage="sqlite_with_telegram_backup",queue_cleanup=1,enrollment_backup=1)
 
 from adb_backend import register_adb
 register_adb(app,conn,now,UPLOAD)

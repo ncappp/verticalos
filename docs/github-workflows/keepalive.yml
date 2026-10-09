@@ -1,0 +1,15 @@
+name: Keep Render awake
+
+# Render Free sleeps after 15 minutes without requests; background jobs (warm-up planning,
+# statistics, alerts) only run while the service is awake. GitHub cron is best-effort (±few min).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: curl -fsS --max-time 90 https://verticalos-rxdl.onrender.com/api/health > /dev/null || true

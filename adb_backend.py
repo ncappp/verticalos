@@ -8,12 +8,7 @@ from platform_adapters import ADAPTERS, account_capability
 TTL = 90
 
 
-def register_adb(app, conn, now, uploads):
-    def digest(value):
-        return hashlib.sha256(value.encode()).hexdigest()
-
-    with conn() as c:
-        c.executescript('''
+SCHEMA = '''
         CREATE TABLE IF NOT EXISTS ui_jobs(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,publication_id TEXT UNIQUE NOT NULL,account_id TEXT NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL,available REAL NOT NULL,lease_until REAL,lease_hash TEXT,phase TEXT,evidence TEXT,result TEXT,error TEXT,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ui_phone_pairs(code_hash TEXT PRIMARY KEY,device_id TEXT NOT NULL,expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS ui_account_media_guard(platform TEXT,username TEXT,sha256 TEXT,publication_id TEXT,PRIMARY KEY(platform,username,sha256));
@@ -22,7 +17,15 @@ def register_adb(app, conn, now, uploads):
         CREATE TABLE IF NOT EXISTS device_capabilities(device_id TEXT PRIMARY KEY,mode TEXT,helper_version INTEGER,app_version TEXT);
         CREATE TABLE IF NOT EXISTS ui_request_hash(key TEXT PRIMARY KEY,body_hash TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ui_idempotency(key TEXT PRIMARY KEY,publication_id TEXT NOT NULL);
-    ''')
+    '''
+
+
+def register_adb(app, conn, now, uploads):
+    def digest(value):
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    with conn() as c:
+        c.executescript(SCHEMA)
     with conn() as c:
         for old in c.execute('select publication_id,payload from ui_jobs order by created_at').fetchall():
             try:
@@ -255,6 +258,10 @@ def register_adb(app, conn, now, uploads):
                 return None, 409
             c.execute('delete from ui_phone_pairs where device_id=? or expires<?', (did, time.time()))
             c.execute('insert into ui_phone_pairs values(?,?,?)', (digest(raw), did, time.time() + 600))
+            import tenancy
+
+            tenancy.register('pair', digest(raw))
+            tenancy.register('device', did)
         return {
             'format': 'FAXCLIP_DEVICE_SETUP_V1',
             'server': 'https://verticalos-rxdl.onrender.com',
@@ -367,6 +374,10 @@ def register_adb(app, conn, now, uploads):
                 c.execute('update accounts set device_id=? where id=?', (did, account['id']))
             c.execute('delete from ui_phone_pairs where device_id=? or expires<?', (did, time.time()))
             c.execute('insert into ui_phone_pairs values(?,?,?)', (digest(raw), did, time.time() + 600))
+            import tenancy
+
+            tenancy.register('pair', digest(raw))
+            tenancy.register('device', did)
         return jsonify(
             code='-'.join(raw[i : i + 5] for i in range(0, 15, 5)),
             expires_seconds=600,

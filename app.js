@@ -25,8 +25,13 @@ async function api(path, opt = {}) {
     ...opt,
     headers: authHeaders({ 'Content-Type': 'application/json', ...(opt.headers || {}) })
   });
-  const x = await r.json();
-  if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`);
+  const x = await r.json().catch(() => ({}));
+  if (!r.ok)
+    throw Object.assign(new Error(x.error || `HTTP ${r.status}`), {
+      status: r.status,
+      denied: !!x.access_denied,
+      errorId: x.error_id
+    });
   return x;
 }
 function esc(v) {

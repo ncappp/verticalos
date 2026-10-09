@@ -1,7 +1,7 @@
-import os, sqlite3, uuid, secrets, subprocess, shutil, hashlib, hmac, json
+import os, uuid, secrets, subprocess, shutil, hashlib, hmac, json
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, send_from_directory, g, has_request_context
-from telegram_auth import validate_init_data, allowed_user, TelegramAuthError
+from telegram_auth import validate_init_data, TelegramAuthError
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.getenv("VERTICALOS_DATA_DIR", os.path.join(BASE, "data"))
@@ -18,12 +18,10 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-class ClosingConnection(sqlite3.Connection):
-    def __exit__(self, *args):
-        try:
-            return super().__exit__(*args)
-        finally:
-            self.close()
+import db as dbmod
+
+dbmod.configure(DB, DATA)
+ClosingConnection = dbmod.ClosingConnection
 
 
 @app.teardown_request
@@ -31,19 +29,16 @@ def close_request_connections(error):
     for connection in getattr(g, "_db_connections", []):
         try:
             connection.close()
-        except sqlite3.Error:
+        except Exception:
             pass
 
 
 def conn():
-    c = sqlite3.connect(DB, timeout=30, factory=ClosingConnection)
+    c = dbmod.connect()
     if has_request_context():
         if not hasattr(g, "_db_connections"):
             g._db_connections = []
         g._db_connections.append(c)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("PRAGMA journal_mode=WAL")
     return c
 
 
@@ -80,6 +75,10 @@ def audit(c, action, entity_type, entity_id, payload=None):
 
 @app.before_request
 def telegram_guard():
+    dbmod.tenant_var.set("main")
+    g.tenant, g.is_admin, g.profile = "main", False, None
+    if request.path.startswith("/api/bridge/") or request.path.startswith("/l/"):
+        _route_machine_request()
     local_token = os.getenv("FAXCLIP_LOCAL_TOKEN", "")
     if local_token:
         from urllib.parse import urlparse
@@ -103,6 +102,7 @@ def telegram_guard():
             if not cookie or not hmac.compare_digest(cookie, local_token):
                 return jsonify(error="Open FaxClip from its Mac launcher"), 401
             g.telegram_user = {"id": 0, "first_name": "Local owner"}
+            g.is_admin = True
             return None
     if request.path.startswith("/api/bridge/"):
         return None
@@ -113,24 +113,109 @@ def telegram_guard():
     ):
         return None
     if os.getenv("ALLOW_DEV_AUTH", "0") == "1":
-        g.telegram_user = {"id": 0, "first_name": "Developer"}
-        return None
+        if os.getenv("RENDER") or os.getenv("FAXCLIP_PRODUCTION") == "1":
+            return jsonify(error="ALLOW_DEV_AUTH запрещён на продакшене"), 500
+        dev = request.headers.get("X-Dev-User", "0")
+        g.telegram_user = {"id": int(dev) if dev.isdigit() else 0, "first_name": "Developer"}
+        return _enter_tenant(g.telegram_user)
     try:
         user = validate_init_data(
             request.headers.get("X-Telegram-Init-Data", ""), os.getenv("TELEGRAM_BOT_TOKEN", "")
         )
-        if not allowed_user(user):
-            return jsonify(error="Telegram user is not allowed"), 403
         g.telegram_user = user
     except TelegramAuthError as exc:
         return jsonify(error=str(exc)), 401
+    return _enter_tenant(user)
 
 
-def init_db():
-    import tg_backup
+def _route_machine_request():
+    """Agents and public short links carry no Telegram identity: route them via the registry."""
+    import tenancy
 
-    tg_backup.restore_if_empty(DB)
-    c = conn()
+    p = request.path
+    try:
+        if p == "/api/bridge/pair":
+            code = (request.get_json(silent=True) or {}).get("code", "")
+            if isinstance(code, str):
+                code = code.replace("-", "").strip().upper()
+                t = tenancy.lookup("pair", hashlib.sha256(code.encode()).hexdigest())
+            else:
+                t = "main"
+        elif p.startswith("/l/"):
+            t = tenancy.lookup("link", p[3:].strip("/"))
+        else:
+            t = tenancy.lookup("device", request.headers.get("X-Device-ID", ""))
+    except Exception:
+        t = "main"
+    dbmod.tenant_var.set(t)
+    g.tenant = t
+
+
+def _enter_tenant(user):
+    import tenancy
+
+    try:
+        tenant, profile = tenancy.authorize(user)
+    except tenancy.AccessDenied as exc:
+        return jsonify(error=str(exc), access_denied=True), exc.status
+    dbmod.tenant_var.set(tenant)
+    g.tenant, g.profile = tenant, profile
+    g.is_admin = str(user.get("id")) in tenancy.admin_ids() or (
+        str(user.get("id")) == "0" and os.getenv("ALLOW_DEV_AUTH", "0") == "1"
+    )
+    return _enforce_plan(profile)
+
+
+def _enforce_plan(profile):
+    """Feature switches and plan limits configured in the admin panel."""
+    import tenancy
+
+    if g.is_admin or not profile:
+        return None
+    eff = tenancy.effective(profile)
+    feat = tenancy.feature_for_path(request.path)
+    if feat and not eff["features"].get(feat, True):
+        return jsonify(error=f"Раздел «{tenancy.FEATURES[feat]}» отключён для вашего тарифа."), 403
+    if request.method != "POST":
+        return None
+    lim = eff["limits"]
+    if request.path in ("/api/media/upload", "/api/media/render") and lim.get("max_upload_mb"):
+        if (request.content_length or 0) > int(lim["max_upload_mb"]) * 1024 * 1024:
+            return jsonify(error=f"Файл больше лимита тарифа ({lim['max_upload_mb']} МБ)."), 413
+    checks = {
+        "/api/accounts": ("max_accounts", "select count(*) from accounts", 1),
+        "/api/devices": ("max_devices", "select count(*) from devices", 1),
+        "/api/recipes": ("max_recipes", "select count(*) from ws_recipes", 1),
+    }
+    if request.path in checks:
+        key, q, add = checks[request.path]
+    elif request.path in ("/api/posts", "/api/publications") or (
+        request.path.startswith("/api/posts/") and request.path.endswith(("/publish", "/duplicate"))
+    ):
+        x = request.get_json(silent=True) or {}
+        ids = x.get("account_ids") if isinstance(x.get("account_ids"), list) else None
+        key, add = "max_posts_per_day", len(ids) if ids else 1
+        q = "select count(*) from publications where created_at>='" + now()[:10] + "'"
+    else:
+        return None
+    if not lim.get(key):
+        return None
+    with conn() as c:
+        used = c.execute(q).fetchone()[0]
+    if used + add > int(lim[key]):
+        return (
+            jsonify(
+                error=f"Достигнут лимит тарифа: {tenancy.LIMITS[key].lower()} — {lim[key]}. "
+                "Напишите администратору, чтобы увеличить лимит.",
+                limit=key,
+            ),
+            429,
+        )
+    return None
+
+
+def create_schema(c):
+    """Create/upgrade every table for the tenant behind connection `c`."""
     c.executescript("""
     PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS devices(
@@ -207,12 +292,43 @@ def init_db():
     from analytics import SCHEMA as AN_SCHEMA
 
     c.executescript(AN_SCHEMA)
-    c.commit()
-    c.close()
-    from maintenance import apply_bootstrap
+    from adb_backend import SCHEMA as ADB_SCHEMA
+    from maintenance import SCHEMA as MAINT_SCHEMA
 
+    c.executescript(ADB_SCHEMA)
+    c.executescript(MAINT_SCHEMA)
+    c.commit()
+
+
+dbmod.on_new_tenant(create_schema)
+
+
+def init_db():
+    import tg_backup
+    import tenancy
+
+    tenancy.init_core()
+    if not dbmod.IS_PG:
+        tg_backup.restore_if_empty(DB)
+    c = dbmod.connect("main")
+    try:
+        create_schema(c)
+    finally:
+        c.close()
+    dbmod.mark_ready("main")
+    from maintenance import apply_bootstrap
+    import migrate
+
+    try:
+        migrate.bootstrap_postgres(DB)
+    except Exception as exc:
+        print("FaxClip: SQLite import skipped:", type(exc).__name__, str(exc)[:200], flush=True)
     apply_bootstrap(conn, now)
-    tg_backup.start(DB)
+    if not dbmod.IS_PG:
+        tg_backup.start(DB)
+    import jobs
+
+    jobs.start_embedded()
 
 
 @app.post("/api/local-session")
@@ -245,6 +361,9 @@ def static_files(name):
         "assembly.js",
         "warmup.js",
         "analytics.js",
+        "admin.js",
+        "antiban.js",
+        "monitor.js",
     }:
         return jsonify(error="not found"), 404
     return send_from_directory(BASE, name)
@@ -310,6 +429,9 @@ def devices():
         )
         audit(c, "create", "device", did, {"name": x.get("name", "Phone")})
         c.commit()
+        import tenancy
+
+        tenancy.register("device", did)
         return jsonify(
             id=did, device_token=token, warning="Токен показывается один раз. Сохраните его в Device Agent."
         )
@@ -713,9 +835,17 @@ def ingest():
 def health():
     c = conn()
     c.execute("select 1").fetchone()
+    import jobs
+
+    try:
+        js = jobs.status()
+    except Exception:
+        js = None
     return jsonify(
         ok=True,
         database=True,
+        database_engine="postgresql" if dbmod.IS_PG else "sqlite",
+        worker=js and {"mode": js["mode"], "heartbeat_age": js["heartbeat_age"]},
         ffmpeg=bool(shutil.which("ffmpeg")),
         time=now(),
         faxclip_version=14,
@@ -757,6 +887,20 @@ register_warmup(app, conn, now, audit)
 from analytics import register_analytics
 
 register_analytics(app, conn, now, audit)
+from antiban import register_antiban
+
+register_antiban(app, conn)
+from admin import register_admin
+
+register_admin(app)
+import jobs  # noqa: E402
+import monitoring  # noqa: E402
+
+monitoring.register_monitoring(app)
+jobs.periodic("watchdog", 300)(monitoring.watchdog)
+import migrate  # noqa: E402
+
+jobs.periodic("pg_backup", 1800)(migrate.backup_pg_to_telegram)
 
 if __name__ == "__main__":
     init_db()

@@ -1,6 +1,9 @@
 """Analytics (QUICON module 11, TikTok via public pages) + link generator with own short links (module 13).
 Metrics are read from public TikTok pages every 12 h (no official API needed); manual entry is the fallback."""
 
+import db as dbmod
+import jobs
+import tenancy
 import json, re, threading, time, uuid, csv, io, secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
@@ -101,7 +104,20 @@ def register_analytics(app, conn, now, audit):
         return request.get_json(silent=True) or {}
 
     lock = threading.Lock()
-    state = {'running': False, 'last_error': None, 'progress': ''}
+    states = {}
+
+    class _State:
+        def __getitem__(self, k):
+            return states.setdefault(
+                dbmod.current_tenant(), {'running': False, 'last_error': None, 'progress': ''}
+            )[k]
+
+        def __setitem__(self, k, v):
+            states.setdefault(dbmod.current_tenant(), {'running': False, 'last_error': None, 'progress': ''})[
+                k
+            ] = v
+
+    state = _State()
 
     def published(c, limit=80):
         return c.execute(
@@ -210,17 +226,31 @@ def register_analytics(app, conn, now, audit):
             state['running'] = False
             state['progress'] = ''
 
+    @jobs.handler('analytics_sync')
+    def _sync_job(payload):
+        sync(force=bool(payload.get('force')))
+
+    @jobs.periodic('analytics_sync', SYNC_EVERY)
+    def _sync_periodic(tenant):
+        with conn() as c:
+            has = c.execute(
+                "select 1 from accounts where lower(platform)='tiktok' and username is not null limit 1"
+            ).fetchone()
+        if has:
+            sync()
+
     def maybe_sync():
         with conn() as c:
             last = c.execute("select value from ws_settings where key='analytics_sync'").fetchone()
         if (not last or time.time() - float(last[0]) >= SYNC_EVERY) and not state['running']:
-            threading.Thread(target=sync, daemon=True).start()
+            jobs.enqueue('analytics_sync', {}, dedupe='analytics_sync', max_attempts=2)
 
     @app.post('/api/analytics/sync')
     def analytics_sync():
         if state['running']:
             return jsonify(ok=True, running=True)
-        threading.Thread(target=sync, kwargs={'force': True}, daemon=True).start()
+        jobs.enqueue('analytics_sync', {'force': True}, dedupe='analytics_sync', max_attempts=2)
+        state['progress'] = 'В очереди'
         return jsonify(ok=True, running=True)
 
     def latest_video(c, before=None):
@@ -348,7 +378,7 @@ def register_analytics(app, conn, now, audit):
             no_metrics=no_metrics,
             accounts=accounts,
             last_sync=float(last[0]) if last else None,
-            syncing=state['running'],
+            syncing=state['running'] or jobs.active('analytics_sync'),
             progress=state['progress'],
             last_error=state['last_error'],
         )
@@ -459,6 +489,7 @@ def register_analytics(app, conn, now, audit):
                 now(),
             ),
         )
+        tenancy.register('link', k)
         return lid
 
     @app.route('/api/links', methods=['GET', 'POST'])
@@ -506,7 +537,7 @@ def register_analytics(app, conn, now, audit):
         if not pl:
             return err('Выберите места: шапка, директ…')
         with conn() as c:
-            q = 'select id,username from accounts where username is not null and username!=""'
+            q = 'select id,username from accounts where username is not null and username!=\'\''
             accs = [dict(r) for r in c.execute(q)]
             if x.get('account_ids'):
                 accs = [a for a in accs if a['id'] in set(x['account_ids'])]

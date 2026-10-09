@@ -1,8 +1,7 @@
 """Notifications (alerts), Telegram delivery and live activity feed."""
 
-import json, os, re, threading, time, uuid
+import json, os, re, time, uuid
 from flask import request, jsonify, g
-import requests
 
 LEVELS = ("info", "success", "warning", "error")
 CODES = {
@@ -16,16 +15,19 @@ ICON = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "⛔"}
 
 
 def _tg_target():
+    """Bot token + chat of the current tenant's owner (each user gets their own notifications)."""
+    import db as dbmod
+    import tenancy
+
     t = os.getenv('TELEGRAM_BOT_TOKEN', '')
-    raw = os.getenv('TELEGRAM_ALLOWED_USER_IDS', '').replace(' ', '').split(',')
+    chat = tenancy.chat_for_tenant(dbmod.current_tenant())
     if (
         os.getenv('FAXCLIP_LOCAL_TOKEN')
         or not re.fullmatch(r'\d{5,15}:[A-Za-z0-9_-]{30,}', t)
-        or not raw
-        or not re.fullmatch(r'\d{3,20}', raw[0])
+        or not re.fullmatch(r'\d{3,20}', chat or '')
     ):
         return None
-    return t, raw[0]
+    return t, chat
 
 
 def settings(c):
@@ -35,21 +37,16 @@ def settings(c):
 
 
 def send_telegram(text):
+    """Queued with retries (core_jobs) instead of a fire-and-forget thread."""
     tg = _tg_target()
     if not tg:
         return
+    try:
+        import jobs
 
-    def go():
-        try:
-            requests.post(
-                f'https://api.telegram.org/bot{tg[0]}/sendMessage',
-                data={'chat_id': tg[1], 'text': text, 'disable_web_page_preview': 'true'},
-                timeout=20,
-            )
-        except requests.RequestException:
-            pass
-
-    threading.Thread(target=go, daemon=True).start()
+        jobs.enqueue('tg_send', {'chat_id': tg[1], 'text': text}, max_attempts=4)
+    except Exception:
+        pass
 
 
 def emit(c, level, event_type, title, message="", page=None, link=None):

@@ -92,11 +92,12 @@ def apply_bootstrap(conn, now):
     print('FaxClip: enrollment backup restored; old publication queue was not restored.', flush=True)
 
 
+SCHEMA = 'CREATE TABLE IF NOT EXISTS ui_deleted_jobs(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,deleted_at TEXT NOT NULL);'
+
+
 def register_maintenance(app, conn, now, uploads):
     with conn() as c:
-        c.execute(
-            'CREATE TABLE IF NOT EXISTS ui_deleted_jobs(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,deleted_at TEXT NOT NULL)'
-        )
+        c.executescript(SCHEMA)
 
     def snapshot(c):
         rows = [dict(r) for r in c.execute('select id,status,lease_until,phase from ui_jobs order by id')]

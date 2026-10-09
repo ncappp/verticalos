@@ -141,6 +141,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assertNotIn('publications', backup['tables'])
         self.assertTrue(all(len(x['token_hash']) == 64 for x in backup['tables']['devices']))
 
+    @unittest.skipIf(__import__('db').IS_PG, 'uses SQLite files directly')
     def test_bootstrap_restores_once_without_queue(self):
         d, h = device()
         new_job(d)

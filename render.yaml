@@ -13,3 +13,15 @@ services:
         sync: false
       - key: ALLOW_DEV_AUTH
         value: "0"
+      # Supabase → Project Settings → Database → Connection string → "Session pooler" (IPv4)
+      - key: DATABASE_URL
+        sync: false
+      # sentry.io → Project → Client Keys (DSN); optional
+      - key: SENTRY_DSN
+        sync: false
+      - key: FAXCLIP_ADMIN_IDS
+        value: "8784706094"
+      - key: FAXCLIP_WORKER
+        value: embedded
+      - key: FAXCLIP_PRODUCTION
+        value: "1"

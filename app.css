@@ -426,3 +426,8 @@ input[type=checkbox]{accent-color:var(--lime);width:18px;height:18px;vertical-al
 .nbadge{font-style:normal;display:inline-block;min-width:20px;padding:1px 6px;border-radius:999px;background:var(--lime);color:#0b0d0c;font-size:11px;font-weight:800;margin-left:6px;text-align:center}
 .ws-select{min-height:40px;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.04);color:var(--text);border:1px solid rgba(255,255,255,.12);font:inherit}
 .feed-error{border-color:rgba(255,80,80,.35)!important}.feed-warning{border-color:rgba(255,190,60,.35)!important}.feed-success{border-color:var(--lime-line)!important}
+.ws-filter{display:flex!important;flex-direction:row;flex-wrap:wrap}
+.ws-filter select{width:auto;min-width:170px;margin-top:0;min-height:40px;padding:8px 36px 8px 12px;font-size:14px}
+.ws-posts>.list:first-child{margin-top:0}
+.ws-post:hover{border-color:var(--lime-line)}
+@media(max-width:700px){.ws-tabs{max-width:100%;overflow-x:auto;scrollbar-width:none}.ws-tabs button{white-space:nowrap;flex-shrink:0}.ws-filter{width:100%}.ws-filter select{flex:1;min-width:0}.ws-post{flex-direction:column;align-items:flex-start}.ws-post>div:last-child{text-align:left!important}}

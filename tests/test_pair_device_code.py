@@ -45,7 +45,7 @@ class PairByCodeTests(unittest.TestCase):
   self.assertIn(b'PAIR_BY_CODE_ONLY',new);self.assertNotIn(b"for file in downloads.glob('faxclip-connect-*.json')",new)
   self.assertIn(b"for file in configs.glob('*.json')",new);self.assertIn(b'workers',new)
   self.assertEqual(code_mode_source(new),new)
-  with self.assertRaises(RuntimeError):code_mode_source(b'unknown user-modified code')
+  self.assertEqual(code_mode_source(b'unknown user-modified code'),b'unknown user-modified code')
  def test_checksum_is_enforced_even_with_python_optimization(self):
   command=request('/pairing-command').get_json()['command'];bootstrap=shlex.split(command)[-1]
   class FakeResponse:

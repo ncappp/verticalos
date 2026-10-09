@@ -60,22 +60,26 @@ def resume_manager(root):
   subprocess.run(['launchctl','kickstart',f'gui/{os.getuid()}/{LABEL}'],capture_output=True,text=True,timeout=30)
 
 def code_mode_source(raw):
- digest=hashlib.sha256(raw).hexdigest()
- if digest in ['a2d6ce27451e848116defe6bea7bcca3c21e73fba4e0ae4670f736cbfbd07643']:return raw
- if digest not in ['67de2054ff592f8cc718981a3717573ef0f2299e994813da37355dca7a1eb67d','9dcca76145463ffc42496c71f5da8c424f6e2579a4cb277515ad3ed9f1734f6a']:raise RuntimeError('Версия менеджера не распознана. Исходники и данные не заменены.')
- text=raw.decode()
+ # Any FaxClip manager build reads saved connections from .faxclip-cloud/devices.
+ # Disabling legacy file import is an optional hardening step: apply it only when the
+ # exact anchor is present once; otherwise keep the installed manager untouched.
+ text=raw.decode('utf-8',errors='strict')
+ if 'PAIR_BY_CODE_ONLY' in text:return raw
  anchor="for file in downloads.glob('faxclip-connect-*.json'):"
- if text.count(anchor)!=1:raise RuntimeError('Неподдерживаемая версия менеджера; ничего не изменено.')
+ if text.count(anchor)!=1 or "configs.glob('*.json')" not in text:return raw
  text=text.replace(anchor,'for file in []: # PAIR_BY_CODE_ONLY: preserve credentials, disable legacy file enrollment')
  text=text.replace('файлы подключения сохраняйте в Downloads этого Mac.','первичное подключение выполняйте по коду в Устройствах.')
- text=text.replace('В Устройствах скачайте новый файл подключения; код вводить не нужно.','В Устройствах получите код восстановления и введите его один раз на Mac.')
- compile(text,'device_manager.py','exec')
+ text=text.replace('В Устройствах скачайте новый файл подключения; код вводить не нужно.','В Устройствах получите код восстановления и введите его один раз.')
+ try:compile(text,'device_manager.py','exec')
+ except SyntaxError:return raw
  return text.encode()
 
 def enable_code_mode(root):
  if not managed_agent(root):return
  file=Path.home()/'Library/Application Support/FaxClip Manager/bridge/device_manager.py'
- old=file.read_bytes();new=code_mode_source(old)
+ old=file.read_bytes()
+ try:new=code_mode_source(old)
+ except UnicodeDecodeError:return
  if new==old:return
  backup=root/'.faxclip-cloud/manager-before-code.py'
  if not backup.exists():backup.write_bytes(old);backup.chmod(0o600)

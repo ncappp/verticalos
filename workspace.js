@@ -78,7 +78,7 @@ const origDevices=window.devices;
 async function wsDevices(){after=wsDevices;await origDevices();const prof=await api("/device-profiles");
 document.querySelectorAll('#view button[onclick^="connectDevice("]').forEach(b=>{const id=(b.getAttribute("onclick").match(/'([^']+)'/)||[])[1];const p=prof.find(x=>x.id===id);if(!p)return;
 const info=document.createElement("div");info.className="muted";info.style.marginTop="10px";info.innerHTML=`Персона: ${esc(p.persona_name||"—")} · Прокси: ${p.proxy_ip?esc(p.proxy_ip+":"+p.proxy_port):"—"}<br>Локаль: ${esc(p.locale||"—")} · Часовой пояс: ${esc(p.timezone||"—")}`;
-const btn=document.createElement("button");btn.className="btn secondary";btn.style.marginTop="12px";btn.style.marginLeft="6px";btn.textContent="Настройки";btn.onclick=()=>wsDeviceForm(id);b.before(info);b.after(btn)})}
+const btn=document.createElement("button");btn.className="btn secondary";btn.style.marginTop="12px";btn.style.marginLeft="6px";btn.textContent="Настройки";btn.onclick=()=>wsDeviceForm(id);const sb=document.createElement("button");sb.className="btn";sb.style.marginTop="12px";sb.style.marginLeft="6px";sb.textContent="Экран";sb.onclick=()=>wsScreen(id,p.name);b.before(info);b.after(btn);btn.after(sb)})}
 window.wsDeviceForm=async function(id){const [prof,px]=await Promise.all([api("/device-profiles"),api("/proxies")]);const x=prof.find(p=>p.id===id)||{};const tz=Intl.supportedValuesOf?Intl.supportedValuesOf("timeZone"):["Europe/Moscow"];
 modalBox(`<h3>Настройки устройства</h3><div class="form"><label>Название<input id="dvn" value="${esc(x.name||"")}" placeholder="101"></label>
 <div class="formgrid"><label>Локаль (язык телефона)<select id="dvl">${opts({"ru-RU":"Русский (ru-RU)","en-US":"English (en-US)","uk-UA":"Українська (uk-UA)","kk-KZ":"Қазақ (kk-KZ)","de-DE":"Deutsch (de-DE)","es-ES":"Español (es-ES)"},x.locale,"Не указана")}</select></label>
@@ -87,6 +87,59 @@ modalBox(`<h3>Настройки устройства</h3><div class="form"><lab
 <p class="muted">Название лучше ставить цифрами: 101, 102, 103. По часовому поясу телефон будет публиковать.</p>${errBox}
 <div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="wsDeviceSave('${id}')">Сохранить</button></div></div>`)}
 window.wsDeviceSave=async function(id){try{await api("/device-profiles/"+id,{method:"PUT",body:JSON.stringify({name:val("dvn"),locale:val("dvl"),timezone:val("dvt"),proxy_id:val("dvp")||null})});await rerender()}catch(e){fail(e)}};
+
+
+/* ---------- Remote screen (via Mac USB) ---------- */
+let scr=null;
+window.wsScreen=async function(id,name){wsScreenStop();scr={id,seq:-1,timer:null,ping:null,drag:null};
+modalBox(`<div class="row"><h3>Экран · ${esc(name||"")}</h3><button class="close" onclick="wsScreenStop();closeModal()">Закрыть</button></div>
+<p class="muted" id="scrInfo">Подключаемся к телефону через Mac…</p>
+<div class="scr-wrap"><img id="scrImg" alt="Экран телефона" draggable="false"><div id="scrEmpty" class="empty">Кадра пока нет. Если долго пусто — на Mac не установлен «Экран FaxClip».</div></div>
+<div class="scr-keys"><button class="btn secondary" onclick="wsScr({action:'key',key:'back'})">◀ Назад</button><button class="btn secondary" onclick="wsScr({action:'key',key:'home'})">● Домой</button><button class="btn secondary" onclick="wsScr({action:'key',key:'recents'})">▢ Недавние</button><button class="btn secondary" onclick="wsScr({action:'wake'})">☀ Разбудить</button><button class="btn secondary" onclick="wsScr({action:'refresh'})">⟳ Обновить</button></div>
+<div class="form"><div class="formgrid ws-pair2"><input id="scrText" placeholder="Текст (латиница) для ввода в активное поле"><button class="btn secondary" onclick="wsScrText()">Ввести</button></div></div>
+<details class="scr-els"><summary onclick="wsScr({action:'elements'})">Элементы на экране (нажать по номеру)</summary><div id="scrEls" class="muted">Загрузка…</div></details>
+<p id="scrLog" class="muted"></p><p class="muted">Нажмите на картинку — телефон нажмёт в этом месте. Проведите — будет свайп. Пока телефон публикует видео, нажимать нельзя: смотреть можно.</p>`);
+const img=document.getElementById("scrImg");const pos=e=>{const r=img.getBoundingClientRect();return {x:Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),y:Math.min(1,Math.max(0,(e.clientY-r.top)/r.height)),t:Date.now()}};
+img.onpointerdown=e=>{e.preventDefault();scr.drag=pos(e)};img.onpointerup=e=>{if(!scr?.drag)return;const a=scr.drag,b=pos(e);scr.drag=null;const d=Math.hypot(a.x-b.x,a.y-b.y);
+if(d<0.02)wsScr({action:"tap",x:a.x,y:a.y});else wsScr({action:"swipe",x1:a.x,y1:a.y,x2:b.x,y2:b.y,ms:Math.max(120,Math.min(1500,b.t-a.t))})};
+const open=()=>api(`/devices/${id}/screen/open`,{method:"POST",body:"{}"}).catch(()=>{});await open();scr.ping=setInterval(open,10000);
+const tick=async()=>{if(!scr||!document.getElementById("scrImg"))return wsScreenStop();try{const s=await api(`/devices/${id}/screen`);
+const info=document.getElementById("scrInfo");info.textContent=!s.agent_online?"Mac не на связи: проверьте, что Mac включён, а «Экран FaxClip» установлен.":s.busy?"Телефон публикует видео — только просмотр.":`На связи${s.frame_age!=null?" · кадр "+Math.round(s.frame_age)+" с назад":""}`;
+if(s.frame_seq!==scr.seq&&s.frame_seq>0){scr.seq=s.frame_seq;try{const r=await fetch(`/api/devices/${id}/screen.jpg?k=${s.frame_seq}`,{headers:authHeaders({})});if(r.ok){const u=URL.createObjectURL(await r.blob());const old=img.src;img.src=u;if(old.startsWith("blob:"))URL.revokeObjectURL(old)}}catch(e){}}
+document.getElementById("scrEmpty").style.display=s.frame_seq>0?"none":"block";
+const last=s.results[s.results.length-1];if(last)document.getElementById("scrLog").textContent=(last.ok?"✓ ":"✗ ")+last.message;
+const els=document.getElementById("scrEls");if(s.elements_age!=null)els.innerHTML=s.elements.length?s.elements.map(e=>`<div class="item scr-el" onclick="wsScr({action:'tap_index',index:${e.index}})"><b>${e.index}</b> ${esc(e.text||e.desc||e.cls)}${e.clickable?' <span class="pill">кнопка</span>':""}</div>`).join(""):"Элементов не найдено"}catch(e){}
+scr&&(scr.timer=setTimeout(tick,1000))};tick()};
+window.wsScreenStop=function(){if(!scr)return;clearTimeout(scr.timer);clearInterval(scr.ping);api(`/devices/${scr.id}/screen/close`,{method:"POST",body:"{}"}).catch(()=>{});scr=null};
+window.wsScr=async function(cmd){if(!scr)return;const log=document.getElementById("scrLog");try{await api(`/devices/${scr.id}/screen/command`,{method:"POST",body:JSON.stringify(cmd)});if(log)log.textContent="Отправлено…"}catch(e){if(log)log.textContent="✗ "+e.message}};
+window.wsScrText=()=>{const t=val("scrText");if(t){wsScr({action:"text",text:t});document.getElementById("scrText").value=""}};
+const _close=window.closeModal;window.closeModal=function(){wsScreenStop();_close()};
+
+/* ---------- Notifications ---------- */
+const LV={info:"Инфо",success:"Успех",warning:"Внимание",error:"Ошибка"};
+const LVI={info:"ℹ️",success:"✅",warning:"⚠️",error:"⛔"};
+const ago=t=>{const s=(Date.now()-new Date(t))/1000;return s<60?"только что":s<3600?Math.floor(s/60)+" мин назад":s<86400?Math.floor(s/3600)+" ч назад":new Date(t).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})};
+let alf={level:"",unread:false,offset:0};
+async function alerts(){after=alerts;const q=new URLSearchParams({limit:30,offset:alf.offset,...(alf.level?{level:alf.level}:{}),...(alf.unread?{unread:1}:{})});const a=await api("/alerts?"+q);setBadge(a.unread);
+shell("Уведомления","События системы и публикаций",`<div class="card"><div class="row"><b>Уведомления в Telegram</b><label class="ws-check"><input type="checkbox" id="ntg" ${a.settings.telegram?"checked":""} onchange="wsNotifySave()"> Присылать в чат с ботом</label></div>
+<p class="muted">${a.telegram_available?"Бот пришлёт сообщения выбранных типов.":"Бот Telegram на сервере не настроен."}</p><div class="row" style="justify-content:flex-start;gap:14px;flex-wrap:wrap">${Object.entries(LV).map(([k,l])=>`<label class="ws-check"><input type="checkbox" class="nlv" value="${k}" ${a.settings.levels.includes(k)?"checked":""} onchange="wsNotifySave()"> ${LVI[k]} ${l}</label>`).join("")}<button class="btn secondary" onclick="wsNotifyTest()">Проверить</button></div></div>
+<div class="card" style="margin-top:14px"><div class="row"><div class="row" style="gap:8px;justify-content:flex-start"><select id="nflt" onchange="alf.level=this.value;alf.offset=0;alerts()" class="ws-select"><option value="">Все уровни</option>${Object.entries(LV).map(([k,l])=>`<option value="${k}" ${alf.level===k?"selected":""}>${l}</option>`).join("")}</select><label class="ws-check"><input type="checkbox" ${alf.unread?"checked":""} onchange="alf.unread=this.checked;alf.offset=0;alerts()"> Только непрочитанные</label></div>
+<div><button class="btn secondary" onclick="wsAlertsAll()">Прочитать все</button> <button class="btn secondary" onclick="wsAlertsClear()">Очистить</button></div></div>
+<div class="list">${a.items.map(x=>`<div class="item al ${x.is_read?"":"unread"}"><div class="row"><b>${LVI[x.level]} ${esc(x.title)}</b><span class="muted">${ago(x.created_at)}</span></div>${x.message?`<div class="muted">${esc(x.message)}</div>`:""}<div class="row" style="justify-content:flex-start;gap:8px;margin-top:6px">${x.page?`<button class="btn secondary" onclick="goPage('${x.page}')">Открыть</button>`:""}${x.link?`<a class="btn secondary" href="${esc(x.link)}" target="_blank" rel="noopener">Ссылка</a>`:""}${x.is_read?"":`<button class="btn secondary" onclick="wsAlertRead('${x.id}')">Прочитано</button>`}</div></div>`).join("")||'<div class="empty">Уведомлений нет</div>'}</div>
+<div class="row" style="margin-top:12px"><button class="btn secondary" ${alf.offset?"":"disabled"} onclick="alf.offset=Math.max(0,alf.offset-30);alerts()">Назад</button><span class="muted">${a.items.length?`${alf.offset+1}–${alf.offset+a.items.length}`:"0"} из ${a.total}</span><button class="btn secondary" ${alf.offset+30<a.total?"":"disabled"} onclick="alf.offset+=30;alerts()">Далее</button></div></div>`)}
+window.alf=alf;window.alerts=alerts;
+window.wsNotifySave=async()=>{await api("/alerts/settings",{method:"PUT",body:JSON.stringify({telegram:val("ntg"),levels:[...document.querySelectorAll(".nlv:checked")].map(e=>e.value)})})};
+window.wsNotifyTest=async()=>{try{await api("/alerts/test",{method:"POST",body:"{}"});alert("Отправлено — проверьте чат с ботом")}catch(e){alert(e.message)}};
+window.wsAlertRead=async id=>{await api(`/alerts/${id}/read`,{method:"POST",body:"{}"});await alerts()};
+window.wsAlertsAll=async()=>{await api("/alerts/read-all",{method:"POST",body:"{}"});await alerts()};
+window.wsAlertsClear=async()=>{if(!confirm("Удалить все уведомления?"))return;await api("/alerts",{method:"DELETE"});await alerts()};
+function setBadge(n){const b=document.querySelector('nav [data-page="alerts"] span');if(b)b.innerHTML=`Уведомления${n?` <em class="nbadge">${n>99?"99+":n}</em>`:""}`}
+
+/* ---------- Dashboard live activity ---------- */
+const origDash=routes.dashboard;let feedTimer=null;
+async function wsDashboard(){await origDash();const v=document.getElementById("view");const card=document.createElement("div");card.className="card";card.style.marginTop="14px";card.innerHTML='<div class="row"><b>Лента событий</b><span class="pill"><i class="dot"></i>в реальном времени</span></div><div id="feed" class="list"><div class="muted">Загрузка…</div></div>';v.append(card);
+const load=async()=>{const f=document.getElementById("feed");if(!f){clearInterval(feedTimer);return}try{const items=await api("/activity?limit=15");f.innerHTML=items.map(x=>`<div class="item feed-${x.level}" ${x.page?`onclick="goPage('${x.page}')" style="cursor:pointer"`:""}><div class="row"><span>${LVI[x.level]} ${esc(x.title)}</span><span class="muted">${ago(x.at)}</span></div>${x.message?`<div class="muted">${esc(x.message)}</div>`:""}</div>`).join("")||'<div class="empty">Событий пока нет</div>'}catch(e){}};
+clearInterval(feedTimer);await load();feedTimer=setInterval(load,5000)}
 
 /* ---------- Onboarding ---------- */
 const STEPS=[{k:"proxies",t:"Прокси",opt:true},{k:"devices",t:"Устройства"},{k:"personas",t:"Персоны"},{k:"accounts",t:"Аккаунты"},{k:"done",t:"Готово"}];
@@ -111,10 +164,13 @@ window.wsSkipProxies=async()=>{await api("/onboarding",{method:"POST",body:JSON.
 window.wsFinish=async()=>{try{await api("/onboarding",{method:"POST",body:JSON.stringify({finish:true})});document.querySelector('nav [data-page="onboarding"]')?.remove();goPage("dashboard")}catch(e){alert(e.message)}};
 
 /* ---------- wiring ---------- */
-Object.assign(routes,{onboarding,personas,proxies,accounts:wsAccounts,devices:wsDevices});
+Object.assign(routes,{onboarding,personas,proxies,alerts,accounts:wsAccounts,devices:wsDevices,dashboard:wsDashboard});window.dashboard=wsDashboard;
 window.accounts=wsAccounts;window.devices=wsDevices;window.addAccount=()=>wsAccountForm();
 const navEl=document.querySelector("nav");const mk=(page,label,svg,beforePage)=>{const b=document.createElement("button");b.type="button";b.className="nav-item";b.dataset.page=page;b.innerHTML=`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${svg}</svg><span>${label}</span>`;b.onclick=()=>goPage(page);const ref=navEl.querySelector(`[data-page="${beforePage}"]`);ref?ref.before(b):navEl.append(b)};
 mk("personas","Персоны",'<circle cx="9" cy="8" r="4"/><path d="M1 21a8 8 0 0 1 16 0"/><path d="M17 4a4 4 0 0 1 0 8m6 9a8 8 0 0 0-5-7.4"/>',"accounts");
 mk("proxies","Прокси",'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',"publishing");
+mk("alerts","Уведомления",'<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',"publishing");
+const pollBadge=()=>api("/alerts?limit=1").then(a=>setBadge(a.unread)).catch(()=>{});pollBadge();setInterval(pollBadge,30000);
+if(document.querySelector('nav .nav-item.active')?.dataset.page==="dashboard")goPage("dashboard");
 api("/onboarding").then(s=>{if(!s.done){mk("onboarding","Настройка",'<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1"/><circle cx="12" cy="12" r="3"/>',"dashboard");goPage("onboarding")}}).catch(()=>{});
 })();

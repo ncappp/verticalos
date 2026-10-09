@@ -138,6 +138,8 @@ def init_db():
     if "period_end" not in cols:c.execute("alter table tasks add column period_end TEXT")
     from workspace import SCHEMA as WS_SCHEMA
     c.executescript(WS_SCHEMA)
+    from notify import SCHEMA as NOTIFY_SCHEMA
+    c.executescript(NOTIFY_SCHEMA)
     c.commit(); c.close()
     from maintenance import apply_bootstrap
     apply_bootstrap(conn,now)
@@ -395,6 +397,10 @@ from maintenance import register_maintenance
 register_maintenance(app,conn,now,UPLOAD)
 from workspace import register_workspace
 register_workspace(app,conn,now,audit)
+from screen import register_screen
+register_screen(app,conn,now)
+from notify import register_notify
+register_notify(app,conn,now)
 
 if __name__=="__main__":
     init_db()

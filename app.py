@@ -146,6 +146,8 @@ def init_db():
     c.executescript(RENDER_SCHEMA)
     from warmup import SCHEMA as WARM_SCHEMA
     c.executescript(WARM_SCHEMA)
+    from analytics import SCHEMA as AN_SCHEMA
+    c.executescript(AN_SCHEMA)
     c.commit(); c.close()
     from maintenance import apply_bootstrap
     apply_bootstrap(conn,now)
@@ -167,7 +169,7 @@ def home():
 
 @app.get("/static/<path:name>")
 def static_files(name):
-    if name not in {"app.css","app.js","workspace.js","posts.js","assembly.js","warmup.js"}: return jsonify(error="not found"),404
+    if name not in {"app.css","app.js","workspace.js","posts.js","assembly.js","warmup.js","analytics.js"}: return jsonify(error="not found"),404
     return send_from_directory(BASE,name)
 
 @app.get("/uploads/<path:name>")
@@ -413,6 +415,8 @@ from render import register_render
 register_render(app,conn,now,audit,UPLOAD)
 from warmup import register_warmup
 register_warmup(app,conn,now,audit)
+from analytics import register_analytics
+register_analytics(app,conn,now,audit)
 
 if __name__=="__main__":
     init_db()

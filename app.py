@@ -142,6 +142,8 @@ def init_db():
     c.executescript(NOTIFY_SCHEMA)
     from posts import SCHEMA as POSTS_SCHEMA
     c.executescript(POSTS_SCHEMA)
+    from render import SCHEMA as RENDER_SCHEMA
+    c.executescript(RENDER_SCHEMA)
     c.commit(); c.close()
     from maintenance import apply_bootstrap
     apply_bootstrap(conn,now)
@@ -163,7 +165,7 @@ def home():
 
 @app.get("/static/<path:name>")
 def static_files(name):
-    if name not in {"app.css","app.js","workspace.js","posts.js"}: return jsonify(error="not found"),404
+    if name not in {"app.css","app.js","workspace.js","posts.js","assembly.js"}: return jsonify(error="not found"),404
     return send_from_directory(BASE,name)
 
 @app.get("/uploads/<path:name>")
@@ -405,6 +407,8 @@ from notify import register_notify
 register_notify(app,conn,now)
 from posts import register_posts
 register_posts(app,conn,now,audit,UPLOAD)
+from render import register_render
+register_render(app,conn,now,audit,UPLOAD)
 
 if __name__=="__main__":
     init_db()

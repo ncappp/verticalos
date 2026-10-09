@@ -122,6 +122,15 @@ def register_posts(app,conn,now,audit,uploads):
             except Exception:pass
         return results
 
+    def create_post(title,caption,clip_id,account_ids,scheduled_at=None):
+        """Internal: create a post and fan it out (used by the video assembly module)."""
+        pid=str(uuid.uuid4())
+        with conn() as c:
+            c.execute('insert into ws_posts values(?,?,?,?,?,?,?,?)',(pid,(title or '')[:100],caption,clip_id,scheduled_at,'draft',now(),now()))
+            for aid in account_ids:c.execute('insert or ignore into ws_post_targets(post_id,account_id,created_at) values(?,?,?)',(pid,aid,now()))
+        res=fan_out(pid,account_ids,True);return pid,res
+    app.extensions['faxclip_create_post']=create_post
+
     @app.route('/api/posts',methods=['GET','POST'])
     def posts():
         if request.method=='POST':

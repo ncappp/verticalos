@@ -10,3 +10,6 @@ bridge/bridge-config.json
 bridge/cloud-device.json
 *.p12
 *.idsig
+*.apk
+*.zip
+node_modules/

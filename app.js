@@ -1,161 +1,803 @@
-
-const $=s=>document.querySelector(s), view=$("#view"), modal=$("#modal");
-const telegramWebApp=window.Telegram?.WebApp; telegramWebApp?.ready(); telegramWebApp?.expand();
-function authHeaders(extra={}){return {"X-Telegram-Init-Data":telegramWebApp?.initData||"",...extra}}
-const localLogin=(async()=>{const token=new URLSearchParams(location.hash.slice(1)).get("localToken");if(token){history.replaceState(null,"",location.pathname);const r=await fetch("/api/local-session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});if(!r.ok)throw new Error("Не удалось открыть локальный FaxClip");}})();
-async function api(path,opt={}){await localLogin;const r=await fetch("/api"+path,{...opt,headers:authHeaders({"Content-Type":"application/json",...(opt.headers||{})})});const x=await r.json();if(!r.ok)throw new Error(x.error||`HTTP ${r.status}`);return x}
-function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
-function pct(a,b){return b?Math.min(100,Math.round(a/b*100)):0}
-function modalBox(html){modal.innerHTML=`<div class="modalbox">${html}</div>`;modal.classList.add("show")}
-function closeModal(){modal.classList.remove("show")}
-modal.onclick=e=>{if(e.target===modal)closeModal()}
-let lastShell="";
-function countUp(el){const raw=el.textContent.trim();if(!/^[\d\s\u00a0]+%?$/.test(raw))return;const target=parseInt(raw.replace(/\D/g,""),10);if(!target||matchMedia("(prefers-reduced-motion: reduce)").matches)return;const pc=raw.endsWith("%"),t0=performance.now(),dur=900;const step=t=>{const k=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-k,3);el.textContent=Math.round(target*e).toLocaleString("ru-RU")+(pc?"%":"");if(k<1)requestAnimationFrame(step)};requestAnimationFrame(step)}
-function shell(title,sub,html,action=""){ $("#title").textContent=title;$("#subtitle").textContent=sub;$("#headerAction").innerHTML=action;view.innerHTML=html;const fresh=lastShell!==title;lastShell=title;if(fresh){view.classList.remove("enter");void view.offsetWidth;view.classList.add("enter");view.querySelectorAll(".metric,.stat-value,.ring-num b").forEach(countUp)}}
-document.addEventListener("pointermove",e=>{const c=e.target.closest?.(".card,.stat,.qa");if(!c)return;const r=c.getBoundingClientRect();c.style.setProperty("--mx",(e.clientX-r.left)+"px");c.style.setProperty("--my",(e.clientY-r.top)+"px")},{passive:true});
-(function tick(){const el=document.getElementById("clock");if(el)el.textContent=new Date().toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});setTimeout(tick,15000-Date.now()%15000)})();
-const ICONS={user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',phone:'<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',clip:'<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/>',eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',send:'<path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/>',heart:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>',users:'<circle cx="9" cy="8" r="4"/><path d="M1 21a8 8 0 0 1 16 0"/><path d="M17 4a4 4 0 0 1 0 8m6 9a8 8 0 0 0-5-7.4"/>',chat:'<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>',plus:'<path d="M12 5v14M5 12h14"/>',upload:'<path d="M12 16V4m0 0-5 5m5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',task:'<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>',bolt:'<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',arrow:'<path d="M7 17 17 7M8 7h9v9"/>'};
-function ic(n,c="ico"){return `<svg class="${c}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]||""}</svg>`}
-const WAVES=["M0 30 C20 26 30 12 50 16 S80 30 100 18 S130 4 150 10 S180 22 200 8","M0 26 C25 30 35 20 55 22 S85 8 105 12 S135 26 155 18 S185 6 200 12","M0 32 C15 22 40 26 60 18 S90 20 110 10 S140 16 160 8 S190 14 200 4","M0 22 C20 18 35 28 60 24 S95 10 120 14 S150 24 170 12 S190 8 200 10"];
-function spark(i){const d=WAVES[i%WAVES.length];return `<svg class="spark" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><path d="${d} L200 40 L0 40Z" class="spark-fill"/><path d="${d}" class="spark-line"/></svg>`}
-let metricIndex=0;
-function metric(l,v,s="",icon=""){const i=metricIndex++;return `<div class="card metric-card">${icon?`<span class="chip-ico">${ic(icon)}</span>`:""}<div class="label">${l}</div><div class="metric">${v}</div><div class="muted metric-sub">${s||"&nbsp;"}</div>${spark(i)}</div>`}
-function ring(p){const r=52,c=2*Math.PI*r;return `<svg class="ring" viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6ff94"/><stop offset="1" stop-color="#9be31a"/></linearGradient></defs><circle cx="64" cy="64" r="${r}" class="ring-track"/><circle cx="64" cy="64" r="${r}" class="ring-dash"/><circle cx="64" cy="64" r="${r}" class="ring-val" stroke-dasharray="${c}" stroke-dashoffset="${c*(1-p/100)}"/></svg>`}
-function stat(icon,label,value,tone,i){return `<div class="stat stat-${tone}"><div class="stat-orb">${ic(icon)}</div><div class="stat-body"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div><div class="stat-bars" aria-hidden="true">${[40,65,35,80,55,90,70].map((h,k)=>`<i style="height:${(h+i*13+k*7)%70+30}%"></i>`).join("")}</div></div>`}
-
-async function dashboard(){let d=await api("/dashboard");metricIndex=0;const n=v=>Number(v||0).toLocaleString("ru-RU");const now=new Date();const greet=now.getHours()<5?"Доброй ночи":now.getHours()<12?"Доброе утро":now.getHours()<18?"Добрый день":"Добрый вечер";shell("Главная","Автоматизируй процесс!",`
-<div class="hero card"><div class="hero-copy"><span class="eyebrow"><i class="live"></i>Система активна</span><h2>${greet}!<br><span>Контент работает за тебя.</span></h2><p>${now.toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long"})} · ${n(d.publications)} публикаций · ${n(d.devices)} устройств онлайн</p><div class="hero-actions"><button class="btn" onclick="goPage('content')">${ic("upload")}Загрузить видео</button><button class="btn secondary" onclick="goPage('publishing')">Очередь публикаций ${ic("arrow")}</button></div><div class="ticker" aria-hidden="true"><div class="ticker-track">${["TikTok","Instagram Reels","YouTube Shorts","VK Видео","Android","Автопостинг","Аналитика"].concat(["TikTok","Instagram Reels","YouTube Shorts","VK Видео","Android","Автопостинг","Аналитика"]).map(x=>`<span>${x}</span>`).join("")}</div></div></div><span class="beam" aria-hidden="true"></span><div class="hero-art" aria-hidden="true"><div class="orbit o1"></div><div class="orbit o2"></div><div class="orbit o3"></div><div class="core">${ic("bolt")}</div><span class="sat s1">${ic("clip")}</span><span class="sat s2">${ic("phone")}</span><span class="sat s3">${ic("heart")}</span></div></div>
-<div class="grid" style="margin-top:14px">${metric("Аккаунты",d.accounts,"подключено","user")}${metric("Устройства",d.devices,"онлайн","phone")}${metric("Клипы",d.clips,"в библиотеке","clip")}${metric("Просмотры",n(d.views),"собрано","eye")}</div>
-<div class="grid2"><div class="card"><div class="card-head"><b>Быстрые действия</b><span class="pill">4 действия</span></div><div class="quick-actions"><button class="qa qa-lime" onclick="goPage('accounts')"><span>${ic("user")}</span>Аккаунт<small>Добавить профиль</small></button><button class="qa qa-lime" onclick="goPage('devices')"><span>${ic("phone")}</span>Телефон<small>Подключить по коду</small></button><button class="qa" onclick="goPage('content')"><span>${ic("upload")}</span>Видео<small>Загрузить клипы</small></button><button class="qa" onclick="goPage('tasks')"><span>${ic("task")}</span>Задача<small>Поставить цель</small></button></div></div>
-<div class="card tasks-card"><div class="card-head"><b>Задачи</b><span class="pill">${d.task_done} / ${d.task_target}</span></div><div class="ring-wrap"><div class="ring-box">${ring(d.task_percent)}<div class="ring-num"><b>${d.task_percent}%</b><small>выполнено</small></div></div><div class="ring-legend"><div><i class="lg-lime"></i><span>Готово</span><b>${n(d.task_done)}</b></div><div><i class="lg-gray"></i><span>Осталось</span><b>${n(Math.max(0,d.task_target-d.task_done))}</b></div><div><i class="lg-line"></i><span>Цель</span><b>${n(d.task_target)}</b></div></div></div></div></div>
-<div class="card summary" style="margin-top:14px"><div class="card-head"><div><b>Сводка</b><p class="small">Ключевые показатели по всем площадкам</p></div><span class="pill"><i class="dot"></i>Данные приложения</span></div><div class="stats">${stat("eye","Просмотры",n(d.views),"lime",0)}${stat("send","Опубликовано клипов",n(d.publications),"glass",1)}${stat("heart","Лайки",n(d.likes),"glass",2)}${stat("users","Новые подписчики",n(d.followers),"lime",3)}</div></div>`)}
-async function accounts(){let a=await api("/accounts");shell("Аккаунты","Профили, устройства и целевая аудитория",`<div class="card"><div class="row"><b>Все аккаунты</b><button class="btn" onclick="addAccount()">+ Добавить</button></div><table class="table"><thead><tr><th>Площадка</th><th>Аккаунт</th><th>Устройство</th><th>Ниша / ЦА</th><th>Статус</th><th></th></tr></thead><tbody>${a.map(x=>`<tr><td>${x.platform}</td><td><b>${esc(x.username||"Без username")}</b></td><td>${esc(x.device||"—")}</td><td>${esc(x.niche||"—")}<br><span class="muted">${esc(x.audience||"")}</span></td><td><span class="pill"><i class="dot"></i>${["CONNECTED","ADDED"].includes(x.status)?"Профиль добавлен":esc(x.status)}</span></td><td><button class="btn secondary" onclick="assignDevice('${x.id}')">Назначить устройство</button> <button class="btn secondary" onclick="accountInfo()">Информация</button></td></tr>`).join("")||`<tr><td colspan="6" class="empty">Аккаунтов пока нет</td></tr>`}</tbody></table></div>`)}
-async function assignDevice(id){const devices=await api('/devices');modalBox(`<h3>Назначить устройство аккаунту</h3><div class="form"><label>Устройство<select id="assignedDevice"><option value="">Не назначено</option>${devices.filter(x=>x.status!=='REVOKED').map(x=>`<option value="${x.id}">${esc(x.name)} · ${esc(x.model)}</option>`).join('')}</select></label><p>Незавершённые публикации не переносятся между телефонами. Если они есть, смена устройства будет заблокирована.</p><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveAssignedDevice('${id}')">Сохранить</button></div></div>`)}
-async function saveAssignedDevice(id){await api(`/accounts/${id}/device`,{method:'PATCH',body:JSON.stringify({device_id:document.getElementById('assignedDevice').value||null})});closeModal();await accounts()}
-async function addAccount(){let d=await api("/devices");modalBox(`<h3>Добавить аккаунт</h3><p class="muted">Эта форма сохраняет профиль и привязку к устройству. Вход в площадку и доступ к публикации ещё не подключены.</p><div class="form"><label>Площадка<select id="ap"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option value="VK">VK Видео</option></select></label><label>Username<input id="au" placeholder="@username"></label><label>Устройство<select id="ad"><option value="">Не назначено</option>${d.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label><label>Ниша<input id="an" placeholder="Beauty / Education / Gaming"></label><label>Целевая аудитория<input id="aa" placeholder="Описание ЦА"></label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveAccount()">Сохранить</button></div></div>`)}
-async function saveAccount(){if(!document.getElementById("au").value.trim())throw new Error("Укажите username аккаунта");await api("/accounts",{method:"POST",body:JSON.stringify({platform:document.getElementById("ap").value,username:document.getElementById("au").value,niche:document.getElementById("an").value,audience:document.getElementById("aa").value,device_id:document.getElementById("ad").value||null})});closeModal();await accounts()}
-function deviceConnectionLabel(status){return status==='ONLINE'?'Подключено':'Не подключено'}
-async function devices(){const [d,integrations]=await Promise.all([api("/devices"),api("/integrations")]);shell("Устройства","Подключение и управление Android-устройствами",`<div class="row" style="margin-bottom:14px"><span class="muted">Марка телефона не ограничивает регистрацию. Подключение USB выполняет запущенный менеджер на Mac; поддержка публикации зависит от адаптера площадки.</span><button class="btn" onclick="addDevice()">+ Добавить</button></div><div class="grid">${d.map(x=>`<div class="card"><div class="row"><b>📱 ${esc(x.name)}</b><span class="pill"><i class="dot ${x.status==="ONLINE"?"":"red"}"></i>${deviceConnectionLabel(x.status)}</span></div><div class="muted" style="margin-top:10px">${esc(x.model)}</div><div style="margin-top:12px">🔋 ${x.battery}% · Аккаунтов: ${x.accounts}</div><div class="muted">ID: ${esc(x.id)}</div>${x.enrolled?'<div class="muted" style="margin-top:12px">Устройство сохранено. При обычном подключении USB код не нужен.</div>':''}<button class="btn secondary" style="margin-top:12px" onclick="connectDevice('${x.id}')">Подключить по коду</button></div>`).join("")||'<div class="card empty">Нет устройств</div>'}</div><div class="card" style="margin-top:14px"><b>Интеграции</b><div class="list">${integrations.map(x=>`<div class="item"><b>${esc(x.label)}</b> — ${esc(x.note)}</div>`).join('')}</div></div>`) }
-function addDevice(){modalBox(`<h3>Добавить устройство</h3><div class="form"><label>Название<input id="dn" placeholder="Телефон для публикаций"></label><label>Модель<input id="dm" placeholder="Любая модель Android"></label><p class="muted">После добавления появится код. Введите его один раз на Mac — уже установленный менеджер сохранит подключение. Обычное отключение USB не удаляет устройство.</p><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="deviceSubmit" onclick="saveDevice()">Добавить</button></div></div>`)}
-async function showDeviceSetup(setup){const helper=await api('/pairing-command');modalBox(`<h3>Подключить устройство по коду</h3><p>Выполните команду ниже в Терминале Mac, к которому подключён телефон. Она открывает разовый ввод кода в существующем мосте: новый APK или приложение устанавливать не нужно.</p><p class="device-token" style="font-size:24px;margin:16px 0"><b>${esc(setup.code)}</b></p><p>Код действует 10 минут и используется один раз. Ввод на Mac скрыт. Не присылайте код в чат.</p><label>Команда для ввода кода<textarea id="pairCommand" readonly rows="5">${esc(helper.command)}</textarea></label><button class="btn secondary" style="margin-top:12px" onclick="copyPairCommand()">Копировать команду</button><p style="margin-top:16px">После успешного ввода ID и доступ сохраняются. Дальше подключайте тот же телефон по USB: запись остаётся, меняется только статус. Разрешение USB-отладки и запущенный менеджер на Mac необходимы. Бесплатный Render по-прежнему может потерять серверную базу при перезапуске.</p><button class="btn" style="margin-top:12px" onclick="closeModal()">Закрыть</button>`)}
-async function copyPairCommand(){const field=document.getElementById('pairCommand');try{await navigator.clipboard.writeText(field.value)}catch{field.focus();field.select();showAppError(new Error('Команда выделена. Скопируйте её вручную: ⌘C на Mac.'))}}
-async function saveDevice(){const button=document.getElementById('deviceSubmit');if(button.disabled)return;const name=document.getElementById('dn').value.trim();if(!name)throw new Error('Укажите название устройства');button.disabled=true;try{const x=await api('/devices',{method:'POST',body:JSON.stringify({name,model:document.getElementById('dm').value,connection:'USB / ADB'})});closeModal();await devices();await showDeviceSetup(x.setup)}catch(e){showAppError(e)}finally{button.disabled=false}}
-async function connectDevice(id){const x=await api(`/devices/${id}/pairing`,{method:'POST',body:'{}'});await showDeviceSetup(x)}
-async function tasks(){let t=await api("/tasks");shell("Задачи","KPI и автоматический прогресс 0–100%",`<div class="row" style="margin-bottom:14px"><span class="muted">Прогресс может увеличиваться автоматически после успешных публикаций</span><button class="btn" onclick="addTask()">+ Новая</button></div><div class="list">${t.map(x=>{let p=pct(x.done,x.target);return `<div class="card"><div class="row"><div><b>${esc(x.title)}</b><div class="muted">${x.done} / ${x.target} ${esc(x.unit)} · ${{DAY:"День",WEEK:"Неделя",MONTH:"Месяц"}[x.period]||"День"}</div></div><b>${p}%</b></div><div class="progress"><div class="bar" style="width:${p}%"></div></div><div class="row"><span class="muted">${x.deadline||"Без дедлайна"}</span><button class="btn secondary" onclick="editTask('${x.id}',${x.done},${x.target})">Изменить</button></div></div>`}).join("")||`<div class="card empty">Нет задач</div>`}</div>`)}
-function addTask(){modalBox(`<h3>Новая задача</h3><div class="form"><label>Название<input id="tt" placeholder="Опубликовать 100 клипов"></label><div class="formgrid"><label>Цель<input id="tg" type="number" value="100"></label><label>Единица<input id="tu" value="клипов"></label></div><label>Период<select id="tp"><option value="DAY">День</option><option value="WEEK">Неделя</option><option value="MONTH">Месяц</option></select></label><label>Дедлайн<input id="td" type="date"></label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveTask()">Создать</button></div></div>`)}
-async function saveTask(){if(!document.getElementById("tt").value.trim())throw new Error("Укажите название задачи");await api("/tasks",{method:"POST",body:JSON.stringify({title:document.getElementById("tt").value,target:+document.getElementById("tg").value,unit:document.getElementById("tu").value,deadline:document.getElementById("td").value,period:document.getElementById("tp").value})});closeModal();await tasks()}
-function editTask(id,done,target){modalBox(`<h3>Прогресс задачи</h3><div class="form"><label>Выполнено<input id="ed" type="number" min="0" max="${target}" value="${done}"></label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveTaskProgress('${id}')">Сохранить</button></div></div>`)}
-async function saveTaskProgress(id){await api(`/tasks/${id}`,{method:"PATCH",body:JSON.stringify({done:+document.getElementById("ed").value})});closeModal();await tasks()}
-async function content(){let c=await api("/clips");shell("Контент","Видео и описания для публикаций",`<div class="card"><div class="row"><b>Клипы</b><button class="btn" onclick="addClip()">+ Загрузить</button></div><table class="table"><thead><tr><th>Название</th><th>Длительность</th><th>AI Score</th><th>Статус</th></tr></thead><tbody>${c.map(x=>`<tr><td>${esc(x.title)}</td><td>${Math.round(x.duration)} сек.</td><td>${x.score}/100</td><td><span class="pill">${["CONNECTED","ADDED"].includes(x.status)?"Профиль добавлен":esc(x.status)}</span></td></tr>`).join("")||`<tr><td colspan="4" class="empty">Клипов нет</td></tr>`}</tbody></table></div><div class="card" style="margin-top:14px"><b>Работа с видео</b><div class="list"><div class="item">Загрузка видео и сохранение карточки клипа</div><div class="item">Добавление клипа в очередь заданий</div><div class="item">Описание сохраняется с клипом. В разделе «Публикации» выберите аккаунт и устройство для постановки в очередь. AI-нарезка, баннеры и автоматический сбор статистики пока не подключены.</div></div></div>`)}
-function addClip(){modalBox(`<h3>Добавить видео</h3><div class="form"><label>Видео<input id="cf" type="file" accept="video/*"></label><label>Название<input id="ct" value="Новый ролик"></label><label>Описание публикации<textarea id="cc" maxlength="2200" rows="4" placeholder="Текст будет введён без изменений"></textarea></label><div class="formgrid"><label>Длительность, если известна<input id="cd" type="number" min="0" value="0"></label></div><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveClip()">Загрузить</button></div></div>`)}
-async function saveClip(){await localLogin;let source_file=null;if(!document.getElementById("cf").files[0])throw new Error("Выберите видеофайл");if(document.getElementById("cf").files[0]){let fd=new FormData();fd.append("file",document.getElementById("cf").files[0]);let r=await fetch("/api/media/upload",{method:"POST",headers:authHeaders(),body:fd});let x=await r.json();if(!r.ok)throw new Error(x.error||"Upload failed");source_file=x.filename}await api("/clips",{method:"POST",body:JSON.stringify({title:document.getElementById("ct").value,duration:+document.getElementById("cd").value,score:0,source_file,caption:document.getElementById("cc").value})});closeModal();await content()}
-function publicationStatus(x){return ({QUEUED:"В очереди",RUNNING:"Телефон выполняет",UI_CONFIRMED:"Публикация подтверждена",NEEDS_REVIEW:"Нужна проверка; очередь остановлена",TRANSFERRED_NEEDS_AUTOMATION:"Старая подготовка, без публикации",CANCELLED:"Снято с очереди"})[x.status]||x.status;}
-function postLink(url){if(typeof url!=='string')return '';try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.port)return '';const path=u.pathname;const valid=(u.hostname==='www.tiktok.com'&&/^\/@[A-Za-z0-9._]+\/video\/[0-9]{10,25}$/.test(path))||(['youtube.com','www.youtube.com'].includes(u.hostname)&&path==='/watch'&&/^[A-Za-z0-9_-]{11}$/.test(u.searchParams.get('v')||''))||(u.hostname==='youtu.be'&&/^\/[A-Za-z0-9_-]{11}$/.test(path))||(['instagram.com','www.instagram.com'].includes(u.hostname)&&/^\/(?:p|reel)\/[A-Za-z0-9_-]+\/?$/.test(path))||(['vk.com','www.vk.com','vkvideo.ru','www.vkvideo.ru'].includes(u.hostname)&&/^\/video-?[0-9]+_[0-9]+$/.test(path));return valid?` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Открыть публикацию</a>`:''}catch{return ''}}
-async function publishing(){let p=await api("/publications");shell("Публикации","Очередь и история",`<div class="row" style="margin-bottom:14px"><span class="muted">Выберите аккаунт и загрузите публикацию. Устройства подключаются в разделе «Устройства». Автоматизация доступна только для активированных адаптеров. На бесплатном Render очередь и история могут потеряться при перезапуске.</span><div class="row"><button class="btn" onclick="uploadAndPublish()">Загрузить публикацию</button><button class="btn secondary" onclick="publicationInfo()">Информация</button><button class="btn secondary" onclick="confirmClearAttempts()">Очистить очередь и историю</button><button class="btn secondary" onclick="saveEnrollmentBackup()">Сохранить подключения</button></div></div><div class="card"><table class="table"><thead><tr><th>Клип</th><th>Аккаунт</th><th>Площадка</th><th>Статус</th><th>Отчёт</th></tr></thead><tbody>${p.map(x=>`<tr><td>${esc(x.clip)}</td><td>${esc(x.account)}</td><td>${esc(x.platform)}</td><td><span class="pill">${esc(publicationStatus(x))}</span></td><td>${x.status==="NEEDS_REVIEW"?`<button class="btn" onclick="confirmLink('${x.id}')">Вставить ссылку</button> <button class="btn secondary" onclick="dismissPub('${x.id}')">Снять с очереди</button> `:""}${x.status==="QUEUED"?`<button class="btn secondary" onclick="dismissPub('${x.id}')">Отменить</button> `:""}<button class="btn secondary" onclick="showEvidence('${x.id}')">Скриншот</button>${postLink(x.external_id)}<div class="muted">${esc(friendlyError(x.error))}</div></td></tr>`).join("")||'<tr><td colspan="5" class="empty">Очередь пуста</td></tr>'}</tbody></table></div>`)}
-function publicationInfo(){modalBox('<h3>О публикациях</h3><p>Подключите устройство в разделе «Устройства», добавьте аккаунт и назначьте ему устройство. Загрузка, отправка и проверка результата доступны только при наличии активного адаптера. Неподдерживаемая площадка не получает ложный статус успешной публикации. Неопределённый результат останавливает очередь без повтора.</p><p>Телефон и Mac должны оставаться включёнными; телефон — подключённым по USB и разблокированным. На бесплатном Render постоянное хранение данных не гарантируется.</p><button class="btn" onclick="closeModal()">Понятно</button>')}
-let publicationKey=null,publicationClips=[];
-function fillPublicationCaption(){const clip=publicationClips.find(x=>x.id===document.getElementById("pc").value);document.getElementById("postCaption").value=clip?.caption||"";}
-async function addPublication(){
- const [clips,accounts]=await Promise.all([api("/clips"),api("/accounts")]);
- const ready=accounts.filter(x=>x.automation_ready);
- if(!clips.length||!ready.length){modalBox('<h3>Подготовка публикации</h3><p>Загрузите MP4-видео, добавьте аккаунт с точным username и назначьте телефон. Для исполнения нужен запущенный менеджер устройств и активный адаптер площадки.</p><button class="btn" style="margin-top:16px" onclick="closeModal()">Понятно</button>');return}
- publicationKey=crypto.randomUUID();publicationClips=clips;
- modalBox(`<h3>Публикация через телефон</h3><div class="form"><label>Клип<select id="pc" onchange="fillPublicationCaption()">${clips.map(x=>`<option value="${x.id}">${esc(x.title)}</option>`).join("")}</select></label><label>Аккаунт<select id="pa">${ready.map(x=>`<option value="${x.id}">${esc(x.platform)} · ${esc(x.username)}</option>`).join("")}</select></label><label>Заголовок<input id="postTitle" maxlength="100"></label><label>Описание<textarea id="postCaption" maxlength="2200" rows="4"></textarea></label><label>Дата и время на вашем устройстве<input id="ps" type="datetime-local"></label><p>Публикация выполняется на выбранном аккаунте. Нужны подключённое устройство и активный адаптер площадки.</p><label><input id="postConsent" type="checkbox"> Подтверждаю публичную публикацию этого видео на выбранном аккаунте</label><label><input id="rightsConsent" type="checkbox"> Подтверждаю права на видео и использование музыки; разрешаю принять соответствующее подтверждение TikTok</label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="postSubmit" onclick="savePublication()">В очередь</button></div></div>`);fillPublicationCaption();
+const $ = (s) => document.querySelector(s),
+  view = $('#view'),
+  modal = $('#modal');
+const telegramWebApp = window.Telegram?.WebApp;
+telegramWebApp?.ready();
+telegramWebApp?.expand();
+function authHeaders(extra = {}) {
+  return { 'X-Telegram-Init-Data': telegramWebApp?.initData || '', ...extra };
 }
-async function savePublication(){
- const button=document.getElementById("postSubmit");if(button.disabled)return;
- if(!document.getElementById("postConsent").checked){showAppError(new Error("Подтвердите публикацию галочкой"));return}
- if(!document.getElementById("rightsConsent").checked){showAppError(new Error("Подтвердите права на видео и музыку"));return}
- if(!document.getElementById("postCaption").value.trim()){showAppError(new Error("Добавьте описание"));return}
- button.disabled=true;
- try{const date=document.getElementById("ps").value;
- await api("/publications",{method:"POST",headers:{"Idempotency-Key":publicationKey},body:JSON.stringify({clip_id:document.getElementById("pc").value,account_id:document.getElementById("pa").value,title:document.getElementById("postTitle").value,caption:document.getElementById("postCaption").value,scheduled_at:date?new Date(date).toISOString():null,confirmed:true,rights_confirmed:true})});closeModal();await publishing()
- }catch(e){showAppError(e)}finally{button.disabled=false}
-}
-async function analytics(){let a=await api("/analytics");shell("Аналитика","Целостная статистика по каждому аккаунту и площадке",`<div class="grid">${(metricIndex=0,"")}${metric("Просмотры",a.views.toLocaleString("ru-RU"),"всего","eye")}${metric("Лайки",a.likes.toLocaleString("ru-RU"),"всего","heart")}${metric("Комментарии",a.comments.toLocaleString("ru-RU"),"всего","chat")}${metric("Подписчики",a.followers.toLocaleString("ru-RU"),"всего","users")}</div><div class="grid2"><div class="card"><b>Площадки</b><table class="table"><tr><th>Площадка</th><th>Клипы</th><th>Просмотры</th><th>Лайки</th></tr>${a.platforms.map(x=>`<tr><td>${x.platform}</td><td>${x.clips}</td><td>${x.views.toLocaleString("ru-RU")}</td><td>${x.likes.toLocaleString("ru-RU")}</td></tr>`).join("")}</table></div><div class="card"><b>Аккаунты</b><div class="list">${a.accounts.map(x=>`<div class="item row"><span>${x.platform} · ${x.username||"—"}</span><b>${x.views.toLocaleString("ru-RU")}</b></div>`).join("")||'<div class="empty">Нет метрик</div>'}</div></div></div>`)}
-const routes={dashboard,content,accounts,devices,publishing,tasks,analytics,registration};
-let navigationId=0;
-async function goPage(name){
- const current=++navigationId;
- document.querySelectorAll("nav .nav-item").forEach(n=>{n.classList.toggle("active",n.dataset.page===name);if(n.dataset.page===name&&innerWidth<=600)n.scrollIntoView({block:"nearest",inline:"center"});n.setAttribute("aria-current",n.dataset.page===name?"page":"false")});
- document.getElementById("appError")?.remove();
- view.innerHTML='<div class="card" role="status">Загрузка…</div>';
- try{await (routes[name]||dashboard)();}catch(e){if(current===navigationId){view.innerHTML='<div class="card">Не удалось загрузить раздел. Причина указана выше.</div>';showAppError(e)}}
-}
-function nav(){document.querySelectorAll("nav .nav-item").forEach(a=>a.onclick=()=>goPage(a.dataset.page))}
-function accountInfo(){modalBox('<h3>Подключение аккаунта</h3><p>Профиль сохранён в FaxClip. Это ещё не авторизация на площадке. Назначьте устройство и проверьте состояние адаптера площадки в разделе «Устройства». Добавление профиля не активирует отсутствующий адаптер. Сбор статистики с площадок пока не реализован.</p><button class="btn" style="margin-top:16px" onclick="closeModal()">Понятно</button>')}
-function registration(){shell("Регистрация","Добавление профиля в FaxClip",'<div class="card"><h3>Добавить существующий аккаунт</h3><p>FaxClip сохраняет профиль, нишу, целевую аудиторию и связь с устройством. Войдите в аккаунты вручную на телефоне. Пароли площадок FaxClip не хранит; публикацию выполняет ПК-мост.</p><button class="btn" style="margin-top:16px" onclick="addAccount()">Добавить аккаунт</button></div>')}
-const tableObserver=new MutationObserver(()=>{document.querySelectorAll("#view table.table").forEach(t=>{if(!t.parentElement.classList.contains("table-wrap")){const w=document.createElement("div");w.className="table-wrap";t.parentNode.insertBefore(w,t);w.append(t)}})});tableObserver.observe(view,{childList:true,subtree:true});
-function showAppError(error){
- const message=error?.message||String(error||"Неизвестная ошибка");
- const translations={
-  "Telegram authorization is required":"Откройте приложение через кнопку меню бота в Telegram. При открытии обычной ссылки данные входа не передаются.",
-  "Invalid Telegram signature":"Подпись Telegram не совпала. Проверьте, что TELEGRAM_BOT_TOKEN в Render принадлежит именно боту, через которого открыто приложение. После смены токена перезапустите сервис и заново откройте Mini App.",
-  "Telegram authorization expired":"Сессия истекла. Полностью закройте Mini App и откройте её снова через кнопку бота.",
-  "Telegram user is not allowed":"Ваш Telegram ID отсутствует в списке разрешённых пользователей."
- };
- let box=document.getElementById("appError");
- if(!box){box=document.createElement("div");box.id="appError";box.setAttribute("role","alert");box.style.cssText="background:#3b1820;color:#fff;padding:16px;margin:12px;border-radius:12px;position:relative;z-index:10000;white-space:pre-wrap";document.querySelector("main").prepend(box)}
- box.replaceChildren();const text=document.createElement("p");text.textContent=translations[message]||message;box.append(text);
- const detail=document.createElement("small");detail.textContent="Telegram: "+(telegramWebApp?.initData?"данные входа получены":"данные входа отсутствуют")+" · Ошибка: "+message;box.append(detail);
- const retry=document.createElement("button");retry.className="btn";retry.style.marginLeft="12px";retry.textContent="Повторить";retry.onclick=()=>{box.remove();const name=document.querySelector("nav .nav-item.active")?.dataset.page||"dashboard";Promise.resolve(({dashboard,content,accounts,devices,publishing,tasks,analytics,registration}[name])()).catch(showAppError)};box.append(retry);
-}
-window.addEventListener("unhandledrejection",e=>{e.preventDefault();showAppError(e.reason)});
-window.addEventListener("error",e=>{showAppError(e.error||e.message)});
-nav();goPage("dashboard");
-
-let evidenceUrl=null;
-async function showEvidence(id){
- try{const r=await fetch(`/api/publications/${id}/evidence`,{headers:authHeaders()});if(!r.ok)throw new Error("Скриншот пока недоступен");if(evidenceUrl)URL.revokeObjectURL(evidenceUrl);evidenceUrl=URL.createObjectURL(await r.blob());modalBox(`<h3>Отчёт с телефона</h3><p>Подтверждение по интерфейсу, не проверка через API площадки.</p><img style="display:block;max-width:100%;margin:16px auto" src="${evidenceUrl}" alt="Экран телефона после задания"><button class="btn" onclick="closeModal()">Закрыть</button>`)}catch(e){showAppError(e)}
-}
-
-setInterval(()=>{if(document.hidden||modal.classList.contains("show"))return;const page=document.querySelector("nav .nav-item.active")?.dataset.page;if(page==="publishing")publishing().catch(showAppError);else if(page==="devices")devices().catch(showAppError)},7000);
-let directUpload=null;
-async function uploadAndPublish(){
- const accounts=await api('/accounts');
- if(!accounts.length)throw new Error('Сначала добавьте аккаунт и назначьте устройство');
- directUpload={key:crypto.randomUUID(),clipId:null};
- modalBox(`<h3>Загрузить и опубликовать</h3><div class="form"><label>MP4-видео<input id="directFile" type="file" accept="video/mp4,.mp4" onchange="directUpload={key:crypto.randomUUID(),clipId:null}"></label><label>Описание<textarea id="directCaption" maxlength="2200" rows="4" placeholder="Описание публикации"></textarea></label><label>Аккаунт<select id="directAccount">${accounts.map(a=>`<option value="${a.id}" ${a.automation_ready?'':'disabled'}>${esc(a.username)} · ${esc(a.platform==='VK'?'VK Видео':a.platform)}${a.automation_ready?'':' — адаптер недоступен'}</option>`).join('')}</select></label><p>После подтверждения FaxClip возьмёт видео и описание из очереди. Mac должен работать, а телефон — быть подключён и разблокирован. Публикация публичная.</p><label><input id="directConsent" type="checkbox"> Разрешаю опубликовать этот ролик на выбранном аккаунте</label><label><input id="directRights" type="checkbox"> Подтверждаю права на видео и музыку, разрешаю принять подтверждение площадки</label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="directSubmit" onclick="saveDirectPublication()">Загрузить и отправить</button></div></div>`);
-}
-async function saveDirectPublication(){
- const button=document.getElementById('directSubmit');if(button.disabled)return;
- const selectedId=document.getElementById('directAccount').value;if(!selectedId)throw new Error('Нет аккаунта с активным адаптером. Регистрация площадки ещё не означает готовую интеграцию.');
- const state=directUpload,file=document.getElementById('directFile').files[0],caption=document.getElementById('directCaption').value,accountId=document.getElementById('directAccount').value;
- if(!file||!caption.trim())throw new Error('Выберите MP4 и добавьте описание');
- if(!document.getElementById('directConsent').checked||!document.getElementById('directRights').checked)throw new Error('Подтвердите публикацию и права');
- button.disabled=true;
- const controls=[...document.querySelectorAll('#directFile,#directCaption,#directAccount,#directConsent,#directRights')];controls.forEach(x=>x.disabled=true);
- try{
-  if(!state.clipId){
-   await localLogin;const form=new FormData();form.append('file',file);
-   const r=await fetch('/api/media/upload',{method:'POST',headers:authHeaders(),body:form});const media=await r.json();if(!r.ok)throw new Error(media.error||'Загрузка не завершена');
-   const clip=await api('/clips',{method:'POST',body:JSON.stringify({title:file.name,source_file:media.filename,duration:0,score:0,caption})});state.clipId=clip.id;
+const localLogin = (async () => {
+  const token = new URLSearchParams(location.hash.slice(1)).get('localToken');
+  if (token) {
+    history.replaceState(null, '', location.pathname);
+    const r = await fetch('/api/local-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    if (!r.ok) throw new Error('Не удалось открыть локальный FaxClip');
   }
-  if(directUpload!==state||!button.isConnected||!modal.classList.contains('show'))return;
-  await api('/publications',{method:'POST',headers:{'Idempotency-Key':state.key},body:JSON.stringify({clip_id:state.clipId,account_id:accountId,caption,confirmed:true,rights_confirmed:true})});
-  closeModal();await publishing();
- }catch(e){showAppError(e)}finally{button.disabled=false;controls.forEach(x=>{if(x.isConnected)x.disabled=false})}
+})();
+async function api(path, opt = {}) {
+  await localLogin;
+  const r = await fetch('/api' + path, {
+    ...opt,
+    headers: authHeaders({ 'Content-Type': 'application/json', ...(opt.headers || {}) })
+  });
+  const x = await r.json();
+  if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`);
+  return x;
+}
+function esc(v) {
+  return String(v ?? '').replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
+  );
+}
+function pct(a, b) {
+  return b ? Math.min(100, Math.round((a / b) * 100)) : 0;
+}
+function modalBox(html) {
+  modal.innerHTML = `<div class="modalbox">${html}</div>`;
+  modal.classList.add('show');
+}
+function closeModal() {
+  modal.classList.remove('show');
+}
+modal.onclick = (e) => {
+  if (e.target === modal) closeModal();
+};
+let lastShell = '';
+function countUp(el) {
+  const raw = el.textContent.trim();
+  if (!/^[\d\s\u00a0]+%?$/.test(raw)) return;
+  const target = parseInt(raw.replace(/\D/g, ''), 10);
+  if (!target || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const pc = raw.endsWith('%'),
+    t0 = performance.now(),
+    dur = 900;
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur),
+      e = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(target * e).toLocaleString('ru-RU') + (pc ? '%' : '');
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function shell(title, sub, html, action = '') {
+  $('#title').textContent = title;
+  $('#subtitle').textContent = sub;
+  $('#headerAction').innerHTML = action;
+  view.innerHTML = html;
+  const fresh = lastShell !== title;
+  lastShell = title;
+  if (fresh) {
+    view.classList.remove('enter');
+    void view.offsetWidth;
+    view.classList.add('enter');
+    view.querySelectorAll('.metric,.stat-value,.ring-num b').forEach(countUp);
+  }
+}
+document.addEventListener(
+  'pointermove',
+  (e) => {
+    const c = e.target.closest?.('.card,.stat,.qa');
+    if (!c) return;
+    const r = c.getBoundingClientRect();
+    c.style.setProperty('--mx', e.clientX - r.left + 'px');
+    c.style.setProperty('--my', e.clientY - r.top + 'px');
+  },
+  { passive: true }
+);
+(function tick() {
+  const el = document.getElementById('clock');
+  if (el) el.textContent = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  setTimeout(tick, 15000 - (Date.now() % 15000));
+})();
+const ICONS = {
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  phone: '<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',
+  clip: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  send: '<path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/>',
+  heart:
+    '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>',
+  users:
+    '<circle cx="9" cy="8" r="4"/><path d="M1 21a8 8 0 0 1 16 0"/><path d="M17 4a4 4 0 0 1 0 8m6 9a8 8 0 0 0-5-7.4"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  upload: '<path d="M12 16V4m0 0-5 5m5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  task: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>',
+  bolt: '<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
+  arrow: '<path d="M7 17 17 7M8 7h9v9"/>'
+};
+function ic(n, c = 'ico') {
+  return `<svg class="${c}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+}
+const WAVES = [
+  'M0 30 C20 26 30 12 50 16 S80 30 100 18 S130 4 150 10 S180 22 200 8',
+  'M0 26 C25 30 35 20 55 22 S85 8 105 12 S135 26 155 18 S185 6 200 12',
+  'M0 32 C15 22 40 26 60 18 S90 20 110 10 S140 16 160 8 S190 14 200 4',
+  'M0 22 C20 18 35 28 60 24 S95 10 120 14 S150 24 170 12 S190 8 200 10'
+];
+function spark(i) {
+  const d = WAVES[i % WAVES.length];
+  return `<svg class="spark" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><path d="${d} L200 40 L0 40Z" class="spark-fill"/><path d="${d}" class="spark-line"/></svg>`;
+}
+let metricIndex = 0;
+function metric(l, v, s = '', icon = '') {
+  const i = metricIndex++;
+  return `<div class="card metric-card">${icon ? `<span class="chip-ico">${ic(icon)}</span>` : ''}<div class="label">${l}</div><div class="metric">${v}</div><div class="muted metric-sub">${s || '&nbsp;'}</div>${spark(i)}</div>`;
+}
+function ring(p) {
+  const r = 52,
+    c = 2 * Math.PI * r;
+  return `<svg class="ring" viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6ff94"/><stop offset="1" stop-color="#9be31a"/></linearGradient></defs><circle cx="64" cy="64" r="${r}" class="ring-track"/><circle cx="64" cy="64" r="${r}" class="ring-dash"/><circle cx="64" cy="64" r="${r}" class="ring-val" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p / 100)}"/></svg>`;
+}
+function stat(icon, label, value, tone, i) {
+  return `<div class="stat stat-${tone}"><div class="stat-orb">${ic(icon)}</div><div class="stat-body"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div><div class="stat-bars" aria-hidden="true">${[40, 65, 35, 80, 55, 90, 70].map((h, k) => `<i style="height:${((h + i * 13 + k * 7) % 70) + 30}%"></i>`).join('')}</div></div>`;
 }
 
+async function dashboard() {
+  let d = await api('/dashboard');
+  metricIndex = 0;
+  const n = (v) => Number(v || 0).toLocaleString('ru-RU');
+  const now = new Date();
+  const greet =
+    now.getHours() < 5
+      ? 'Доброй ночи'
+      : now.getHours() < 12
+        ? 'Доброе утро'
+        : now.getHours() < 18
+          ? 'Добрый день'
+          : 'Добрый вечер';
+  shell(
+    'Главная',
+    'Автоматизируй процесс!',
+    `
+<div class="hero card"><div class="hero-copy"><span class="eyebrow"><i class="live"></i>Система активна</span><h2>${greet}!<br><span>Контент работает за тебя.</span></h2><p>${now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })} · ${n(d.publications)} публикаций · ${n(d.devices)} устройств онлайн</p><div class="hero-actions"><button class="btn" onclick="goPage('content')">${ic('upload')}Загрузить видео</button><button class="btn secondary" onclick="goPage('publishing')">Очередь публикаций ${ic('arrow')}</button></div><div class="ticker" aria-hidden="true"><div class="ticker-track">${[
+      'TikTok',
+      'Instagram Reels',
+      'YouTube Shorts',
+      'VK Видео',
+      'Android',
+      'Автопостинг',
+      'Аналитика'
+    ]
+      .concat([
+        'TikTok',
+        'Instagram Reels',
+        'YouTube Shorts',
+        'VK Видео',
+        'Android',
+        'Автопостинг',
+        'Аналитика'
+      ])
+      .map((x) => `<span>${x}</span>`)
+      .join(
+        ''
+      )}</div></div></div><span class="beam" aria-hidden="true"></span><div class="hero-art" aria-hidden="true"><div class="orbit o1"></div><div class="orbit o2"></div><div class="orbit o3"></div><div class="core">${ic('bolt')}</div><span class="sat s1">${ic('clip')}</span><span class="sat s2">${ic('phone')}</span><span class="sat s3">${ic('heart')}</span></div></div>
+<div class="grid" style="margin-top:14px">${metric('Аккаунты', d.accounts, 'подключено', 'user')}${metric('Устройства', d.devices, 'онлайн', 'phone')}${metric('Клипы', d.clips, 'в библиотеке', 'clip')}${metric('Просмотры', n(d.views), 'собрано', 'eye')}</div>
+<div class="grid2"><div class="card"><div class="card-head"><b>Быстрые действия</b><span class="pill">4 действия</span></div><div class="quick-actions"><button class="qa qa-lime" onclick="goPage('accounts')"><span>${ic('user')}</span>Аккаунт<small>Добавить профиль</small></button><button class="qa qa-lime" onclick="goPage('devices')"><span>${ic('phone')}</span>Телефон<small>Подключить по коду</small></button><button class="qa" onclick="goPage('content')"><span>${ic('upload')}</span>Видео<small>Загрузить клипы</small></button><button class="qa" onclick="goPage('tasks')"><span>${ic('task')}</span>Задача<small>Поставить цель</small></button></div></div>
+<div class="card tasks-card"><div class="card-head"><b>Задачи</b><span class="pill">${d.task_done} / ${d.task_target}</span></div><div class="ring-wrap"><div class="ring-box">${ring(d.task_percent)}<div class="ring-num"><b>${d.task_percent}%</b><small>выполнено</small></div></div><div class="ring-legend"><div><i class="lg-lime"></i><span>Готово</span><b>${n(d.task_done)}</b></div><div><i class="lg-gray"></i><span>Осталось</span><b>${n(Math.max(0, d.task_target - d.task_done))}</b></div><div><i class="lg-line"></i><span>Цель</span><b>${n(d.task_target)}</b></div></div></div></div></div>
+<div class="card summary" style="margin-top:14px"><div class="card-head"><div><b>Сводка</b><p class="small">Ключевые показатели по всем площадкам</p></div><span class="pill"><i class="dot"></i>Данные приложения</span></div><div class="stats">${stat('eye', 'Просмотры', n(d.views), 'lime', 0)}${stat('send', 'Опубликовано клипов', n(d.publications), 'glass', 1)}${stat('heart', 'Лайки', n(d.likes), 'glass', 2)}${stat('users', 'Новые подписчики', n(d.followers), 'lime', 3)}</div></div>`
+  );
+}
+async function accounts() {
+  let a = await api('/accounts');
+  shell(
+    'Аккаунты',
+    'Профили, устройства и целевая аудитория',
+    `<div class="card"><div class="row"><b>Все аккаунты</b><button class="btn" onclick="addAccount()">+ Добавить</button></div><table class="table"><thead><tr><th>Площадка</th><th>Аккаунт</th><th>Устройство</th><th>Ниша / ЦА</th><th>Статус</th><th></th></tr></thead><tbody>${a.map((x) => `<tr><td>${x.platform}</td><td><b>${esc(x.username || 'Без username')}</b></td><td>${esc(x.device || '—')}</td><td>${esc(x.niche || '—')}<br><span class="muted">${esc(x.audience || '')}</span></td><td><span class="pill"><i class="dot"></i>${['CONNECTED', 'ADDED'].includes(x.status) ? 'Профиль добавлен' : esc(x.status)}</span></td><td><button class="btn secondary" onclick="assignDevice('${x.id}')">Назначить устройство</button> <button class="btn secondary" onclick="accountInfo()">Информация</button></td></tr>`).join('') || `<tr><td colspan="6" class="empty">Аккаунтов пока нет</td></tr>`}</tbody></table></div>`
+  );
+}
+async function assignDevice(id) {
+  const devices = await api('/devices');
+  modalBox(
+    `<h3>Назначить устройство аккаунту</h3><div class="form"><label>Устройство<select id="assignedDevice"><option value="">Не назначено</option>${devices
+      .filter((x) => x.status !== 'REVOKED')
+      .map((x) => `<option value="${x.id}">${esc(x.name)} · ${esc(x.model)}</option>`)
+      .join(
+        ''
+      )}</select></label><p>Незавершённые публикации не переносятся между телефонами. Если они есть, смена устройства будет заблокирована.</p><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveAssignedDevice('${id}')">Сохранить</button></div></div>`
+  );
+}
+async function saveAssignedDevice(id) {
+  await api(`/accounts/${id}/device`, {
+    method: 'PATCH',
+    body: JSON.stringify({ device_id: document.getElementById('assignedDevice').value || null })
+  });
+  closeModal();
+  await accounts();
+}
+async function addAccount() {
+  let d = await api('/devices');
+  modalBox(
+    `<h3>Добавить аккаунт</h3><p class="muted">Эта форма сохраняет профиль и привязку к устройству. Вход в площадку и доступ к публикации ещё не подключены.</p><div class="form"><label>Площадка<select id="ap"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option value="VK">VK Видео</option></select></label><label>Username<input id="au" placeholder="@username"></label><label>Устройство<select id="ad"><option value="">Не назначено</option>${d.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label><label>Ниша<input id="an" placeholder="Beauty / Education / Gaming"></label><label>Целевая аудитория<input id="aa" placeholder="Описание ЦА"></label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveAccount()">Сохранить</button></div></div>`
+  );
+}
+async function saveAccount() {
+  if (!document.getElementById('au').value.trim()) throw new Error('Укажите username аккаунта');
+  await api('/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      platform: document.getElementById('ap').value,
+      username: document.getElementById('au').value,
+      niche: document.getElementById('an').value,
+      audience: document.getElementById('aa').value,
+      device_id: document.getElementById('ad').value || null
+    })
+  });
+  closeModal();
+  await accounts();
+}
+function deviceConnectionLabel(status) {
+  return status === 'ONLINE' ? 'Подключено' : 'Не подключено';
+}
+async function devices() {
+  const [d, integrations] = await Promise.all([api('/devices'), api('/integrations')]);
+  shell(
+    'Устройства',
+    'Подключение и управление Android-устройствами',
+    `<div class="row" style="margin-bottom:14px"><span class="muted">Марка телефона не ограничивает регистрацию. Подключение USB выполняет запущенный менеджер на Mac; поддержка публикации зависит от адаптера площадки.</span><button class="btn" onclick="addDevice()">+ Добавить</button></div><div class="grid">${d.map((x) => `<div class="card"><div class="row"><b>📱 ${esc(x.name)}</b><span class="pill"><i class="dot ${x.status === 'ONLINE' ? '' : 'red'}"></i>${deviceConnectionLabel(x.status)}</span></div><div class="muted" style="margin-top:10px">${esc(x.model)}</div><div style="margin-top:12px">🔋 ${x.battery}% · Аккаунтов: ${x.accounts}</div><div class="muted">ID: ${esc(x.id)}</div>${x.enrolled ? '<div class="muted" style="margin-top:12px">Устройство сохранено. При обычном подключении USB код не нужен.</div>' : ''}<button class="btn secondary" style="margin-top:12px" onclick="connectDevice('${x.id}')">Подключить по коду</button></div>`).join('') || '<div class="card empty">Нет устройств</div>'}</div><div class="card" style="margin-top:14px"><b>Интеграции</b><div class="list">${integrations.map((x) => `<div class="item"><b>${esc(x.label)}</b> — ${esc(x.note)}</div>`).join('')}</div></div>`
+  );
+}
+function addDevice() {
+  modalBox(
+    `<h3>Добавить устройство</h3><div class="form"><label>Название<input id="dn" placeholder="Телефон для публикаций"></label><label>Модель<input id="dm" placeholder="Любая модель Android"></label><p class="muted">После добавления появится код. Введите его один раз на Mac — уже установленный менеджер сохранит подключение. Обычное отключение USB не удаляет устройство.</p><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="deviceSubmit" onclick="saveDevice()">Добавить</button></div></div>`
+  );
+}
+async function showDeviceSetup(setup) {
+  const helper = await api('/pairing-command');
+  modalBox(
+    `<h3>Подключить устройство по коду</h3><p>Выполните команду ниже в Терминале Mac, к которому подключён телефон. Она открывает разовый ввод кода в существующем мосте: новый APK или приложение устанавливать не нужно.</p><p class="device-token" style="font-size:24px;margin:16px 0"><b>${esc(setup.code)}</b></p><p>Код действует 10 минут и используется один раз. Ввод на Mac скрыт. Не присылайте код в чат.</p><label>Команда для ввода кода<textarea id="pairCommand" readonly rows="5">${esc(helper.command)}</textarea></label><button class="btn secondary" style="margin-top:12px" onclick="copyPairCommand()">Копировать команду</button><p style="margin-top:16px">После успешного ввода ID и доступ сохраняются. Дальше подключайте тот же телефон по USB: запись остаётся, меняется только статус. Разрешение USB-отладки и запущенный менеджер на Mac необходимы. Бесплатный Render по-прежнему может потерять серверную базу при перезапуске.</p><button class="btn" style="margin-top:12px" onclick="closeModal()">Закрыть</button>`
+  );
+}
+async function copyPairCommand() {
+  const field = document.getElementById('pairCommand');
+  try {
+    await navigator.clipboard.writeText(field.value);
+  } catch {
+    field.focus();
+    field.select();
+    showAppError(new Error('Команда выделена. Скопируйте её вручную: ⌘C на Mac.'));
+  }
+}
+async function saveDevice() {
+  const button = document.getElementById('deviceSubmit');
+  if (button.disabled) return;
+  const name = document.getElementById('dn').value.trim();
+  if (!name) throw new Error('Укажите название устройства');
+  button.disabled = true;
+  try {
+    const x = await api('/devices', {
+      method: 'POST',
+      body: JSON.stringify({ name, model: document.getElementById('dm').value, connection: 'USB / ADB' })
+    });
+    closeModal();
+    await devices();
+    await showDeviceSetup(x.setup);
+  } catch (e) {
+    showAppError(e);
+  } finally {
+    button.disabled = false;
+  }
+}
+async function connectDevice(id) {
+  const x = await api(`/devices/${id}/pairing`, { method: 'POST', body: '{}' });
+  await showDeviceSetup(x);
+}
+async function tasks() {
+  let t = await api('/tasks');
+  shell(
+    'Задачи',
+    'KPI и автоматический прогресс 0–100%',
+    `<div class="row" style="margin-bottom:14px"><span class="muted">Прогресс может увеличиваться автоматически после успешных публикаций</span><button class="btn" onclick="addTask()">+ Новая</button></div><div class="list">${
+      t
+        .map((x) => {
+          let p = pct(x.done, x.target);
+          return `<div class="card"><div class="row"><div><b>${esc(x.title)}</b><div class="muted">${x.done} / ${x.target} ${esc(x.unit)} · ${{ DAY: 'День', WEEK: 'Неделя', MONTH: 'Месяц' }[x.period] || 'День'}</div></div><b>${p}%</b></div><div class="progress"><div class="bar" style="width:${p}%"></div></div><div class="row"><span class="muted">${x.deadline || 'Без дедлайна'}</span><button class="btn secondary" onclick="editTask('${x.id}',${x.done},${x.target})">Изменить</button></div></div>`;
+        })
+        .join('') || `<div class="card empty">Нет задач</div>`
+    }</div>`
+  );
+}
+function addTask() {
+  modalBox(
+    `<h3>Новая задача</h3><div class="form"><label>Название<input id="tt" placeholder="Опубликовать 100 клипов"></label><div class="formgrid"><label>Цель<input id="tg" type="number" value="100"></label><label>Единица<input id="tu" value="клипов"></label></div><label>Период<select id="tp"><option value="DAY">День</option><option value="WEEK">Неделя</option><option value="MONTH">Месяц</option></select></label><label>Дедлайн<input id="td" type="date"></label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveTask()">Создать</button></div></div>`
+  );
+}
+async function saveTask() {
+  if (!document.getElementById('tt').value.trim()) throw new Error('Укажите название задачи');
+  await api('/tasks', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: document.getElementById('tt').value,
+      target: +document.getElementById('tg').value,
+      unit: document.getElementById('tu').value,
+      deadline: document.getElementById('td').value,
+      period: document.getElementById('tp').value
+    })
+  });
+  closeModal();
+  await tasks();
+}
+function editTask(id, done, target) {
+  modalBox(
+    `<h3>Прогресс задачи</h3><div class="form"><label>Выполнено<input id="ed" type="number" min="0" max="${target}" value="${done}"></label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveTaskProgress('${id}')">Сохранить</button></div></div>`
+  );
+}
+async function saveTaskProgress(id) {
+  await api(`/tasks/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ done: +document.getElementById('ed').value })
+  });
+  closeModal();
+  await tasks();
+}
+async function content() {
+  let c = await api('/clips');
+  shell(
+    'Контент',
+    'Видео и описания для публикаций',
+    `<div class="card"><div class="row"><b>Клипы</b><button class="btn" onclick="addClip()">+ Загрузить</button></div><table class="table"><thead><tr><th>Название</th><th>Длительность</th><th>AI Score</th><th>Статус</th></tr></thead><tbody>${c.map((x) => `<tr><td>${esc(x.title)}</td><td>${Math.round(x.duration)} сек.</td><td>${x.score}/100</td><td><span class="pill">${['CONNECTED', 'ADDED'].includes(x.status) ? 'Профиль добавлен' : esc(x.status)}</span></td></tr>`).join('') || `<tr><td colspan="4" class="empty">Клипов нет</td></tr>`}</tbody></table></div><div class="card" style="margin-top:14px"><b>Работа с видео</b><div class="list"><div class="item">Загрузка видео и сохранение карточки клипа</div><div class="item">Добавление клипа в очередь заданий</div><div class="item">Описание сохраняется с клипом. В разделе «Публикации» выберите аккаунт и устройство для постановки в очередь. AI-нарезка, баннеры и автоматический сбор статистики пока не подключены.</div></div></div>`
+  );
+}
+function addClip() {
+  modalBox(
+    `<h3>Добавить видео</h3><div class="form"><label>Видео<input id="cf" type="file" accept="video/*"></label><label>Название<input id="ct" value="Новый ролик"></label><label>Описание публикации<textarea id="cc" maxlength="2200" rows="4" placeholder="Текст будет введён без изменений"></textarea></label><div class="formgrid"><label>Длительность, если известна<input id="cd" type="number" min="0" value="0"></label></div><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" onclick="saveClip()">Загрузить</button></div></div>`
+  );
+}
+async function saveClip() {
+  await localLogin;
+  let source_file = null;
+  if (!document.getElementById('cf').files[0]) throw new Error('Выберите видеофайл');
+  if (document.getElementById('cf').files[0]) {
+    let fd = new FormData();
+    fd.append('file', document.getElementById('cf').files[0]);
+    let r = await fetch('/api/media/upload', { method: 'POST', headers: authHeaders(), body: fd });
+    let x = await r.json();
+    if (!r.ok) throw new Error(x.error || 'Upload failed');
+    source_file = x.filename;
+  }
+  await api('/clips', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: document.getElementById('ct').value,
+      duration: +document.getElementById('cd').value,
+      score: 0,
+      source_file,
+      caption: document.getElementById('cc').value
+    })
+  });
+  closeModal();
+  await content();
+}
+function publicationStatus(x) {
+  return (
+    {
+      QUEUED: 'В очереди',
+      RUNNING: 'Телефон выполняет',
+      UI_CONFIRMED: 'Публикация подтверждена',
+      NEEDS_REVIEW: 'Нужна проверка; очередь остановлена',
+      TRANSFERRED_NEEDS_AUTOMATION: 'Старая подготовка, без публикации',
+      CANCELLED: 'Снято с очереди'
+    }[x.status] || x.status
+  );
+}
+function postLink(url) {
+  if (typeof url !== 'string') return '';
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return '';
+    const path = u.pathname;
+    const valid =
+      (u.hostname === 'www.tiktok.com' && /^\/@[A-Za-z0-9._]+\/video\/[0-9]{10,25}$/.test(path)) ||
+      (['youtube.com', 'www.youtube.com'].includes(u.hostname) &&
+        path === '/watch' &&
+        /^[A-Za-z0-9_-]{11}$/.test(u.searchParams.get('v') || '')) ||
+      (u.hostname === 'youtu.be' && /^\/[A-Za-z0-9_-]{11}$/.test(path)) ||
+      (['instagram.com', 'www.instagram.com'].includes(u.hostname) &&
+        /^\/(?:p|reel)\/[A-Za-z0-9_-]+\/?$/.test(path)) ||
+      (['vk.com', 'www.vk.com', 'vkvideo.ru', 'www.vkvideo.ru'].includes(u.hostname) &&
+        /^\/video-?[0-9]+_[0-9]+$/.test(path));
+    return valid
+      ? ` <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Открыть публикацию</a>`
+      : '';
+  } catch {
+    return '';
+  }
+}
+async function publishing() {
+  let p = await api('/publications');
+  shell(
+    'Публикации',
+    'Очередь и история',
+    `<div class="row" style="margin-bottom:14px"><span class="muted">Выберите аккаунт и загрузите публикацию. Устройства подключаются в разделе «Устройства». Автоматизация доступна только для активированных адаптеров. На бесплатном Render очередь и история могут потеряться при перезапуске.</span><div class="row"><button class="btn" onclick="uploadAndPublish()">Загрузить публикацию</button><button class="btn secondary" onclick="publicationInfo()">Информация</button><button class="btn secondary" onclick="confirmClearAttempts()">Очистить очередь и историю</button><button class="btn secondary" onclick="saveEnrollmentBackup()">Сохранить подключения</button></div></div><div class="card"><table class="table"><thead><tr><th>Клип</th><th>Аккаунт</th><th>Площадка</th><th>Статус</th><th>Отчёт</th></tr></thead><tbody>${p.map((x) => `<tr><td>${esc(x.clip)}</td><td>${esc(x.account)}</td><td>${esc(x.platform)}</td><td><span class="pill">${esc(publicationStatus(x))}</span></td><td>${x.status === 'NEEDS_REVIEW' ? `<button class="btn" onclick="confirmLink('${x.id}')">Вставить ссылку</button> <button class="btn secondary" onclick="dismissPub('${x.id}')">Снять с очереди</button> ` : ''}${x.status === 'QUEUED' ? `<button class="btn secondary" onclick="dismissPub('${x.id}')">Отменить</button> ` : ''}<button class="btn secondary" onclick="showEvidence('${x.id}')">Скриншот</button>${postLink(x.external_id)}<div class="muted">${esc(friendlyError(x.error))}</div></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Очередь пуста</td></tr>'}</tbody></table></div>`
+  );
+}
+function publicationInfo() {
+  modalBox(
+    '<h3>О публикациях</h3><p>Подключите устройство в разделе «Устройства», добавьте аккаунт и назначьте ему устройство. Загрузка, отправка и проверка результата доступны только при наличии активного адаптера. Неподдерживаемая площадка не получает ложный статус успешной публикации. Неопределённый результат останавливает очередь без повтора.</p><p>Телефон и Mac должны оставаться включёнными; телефон — подключённым по USB и разблокированным. На бесплатном Render постоянное хранение данных не гарантируется.</p><button class="btn" onclick="closeModal()">Понятно</button>'
+  );
+}
+let publicationKey = null,
+  publicationClips = [];
+function fillPublicationCaption() {
+  const clip = publicationClips.find((x) => x.id === document.getElementById('pc').value);
+  document.getElementById('postCaption').value = clip?.caption || '';
+}
+async function addPublication() {
+  const [clips, accounts] = await Promise.all([api('/clips'), api('/accounts')]);
+  const ready = accounts.filter((x) => x.automation_ready);
+  if (!clips.length || !ready.length) {
+    modalBox(
+      '<h3>Подготовка публикации</h3><p>Загрузите MP4-видео, добавьте аккаунт с точным username и назначьте телефон. Для исполнения нужен запущенный менеджер устройств и активный адаптер площадки.</p><button class="btn" style="margin-top:16px" onclick="closeModal()">Понятно</button>'
+    );
+    return;
+  }
+  publicationKey = crypto.randomUUID();
+  publicationClips = clips;
+  modalBox(
+    `<h3>Публикация через телефон</h3><div class="form"><label>Клип<select id="pc" onchange="fillPublicationCaption()">${clips.map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select></label><label>Аккаунт<select id="pa">${ready.map((x) => `<option value="${x.id}">${esc(x.platform)} · ${esc(x.username)}</option>`).join('')}</select></label><label>Заголовок<input id="postTitle" maxlength="100"></label><label>Описание<textarea id="postCaption" maxlength="2200" rows="4"></textarea></label><label>Дата и время на вашем устройстве<input id="ps" type="datetime-local"></label><p>Публикация выполняется на выбранном аккаунте. Нужны подключённое устройство и активный адаптер площадки.</p><label><input id="postConsent" type="checkbox"> Подтверждаю публичную публикацию этого видео на выбранном аккаунте</label><label><input id="rightsConsent" type="checkbox"> Подтверждаю права на видео и использование музыки; разрешаю принять соответствующее подтверждение TikTok</label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="postSubmit" onclick="savePublication()">В очередь</button></div></div>`
+  );
+  fillPublicationCaption();
+}
+async function savePublication() {
+  const button = document.getElementById('postSubmit');
+  if (button.disabled) return;
+  if (!document.getElementById('postConsent').checked) {
+    showAppError(new Error('Подтвердите публикацию галочкой'));
+    return;
+  }
+  if (!document.getElementById('rightsConsent').checked) {
+    showAppError(new Error('Подтвердите права на видео и музыку'));
+    return;
+  }
+  if (!document.getElementById('postCaption').value.trim()) {
+    showAppError(new Error('Добавьте описание'));
+    return;
+  }
+  button.disabled = true;
+  try {
+    const date = document.getElementById('ps').value;
+    await api('/publications', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': publicationKey },
+      body: JSON.stringify({
+        clip_id: document.getElementById('pc').value,
+        account_id: document.getElementById('pa').value,
+        title: document.getElementById('postTitle').value,
+        caption: document.getElementById('postCaption').value,
+        scheduled_at: date ? new Date(date).toISOString() : null,
+        confirmed: true,
+        rights_confirmed: true
+      })
+    });
+    closeModal();
+    await publishing();
+  } catch (e) {
+    showAppError(e);
+  } finally {
+    button.disabled = false;
+  }
+}
+async function analytics() {
+  let a = await api('/analytics');
+  shell(
+    'Аналитика',
+    'Целостная статистика по каждому аккаунту и площадке',
+    `<div class="grid">${((metricIndex = 0), '')}${metric('Просмотры', a.views.toLocaleString('ru-RU'), 'всего', 'eye')}${metric('Лайки', a.likes.toLocaleString('ru-RU'), 'всего', 'heart')}${metric('Комментарии', a.comments.toLocaleString('ru-RU'), 'всего', 'chat')}${metric('Подписчики', a.followers.toLocaleString('ru-RU'), 'всего', 'users')}</div><div class="grid2"><div class="card"><b>Площадки</b><table class="table"><tr><th>Площадка</th><th>Клипы</th><th>Просмотры</th><th>Лайки</th></tr>${a.platforms.map((x) => `<tr><td>${x.platform}</td><td>${x.clips}</td><td>${x.views.toLocaleString('ru-RU')}</td><td>${x.likes.toLocaleString('ru-RU')}</td></tr>`).join('')}</table></div><div class="card"><b>Аккаунты</b><div class="list">${a.accounts.map((x) => `<div class="item row"><span>${x.platform} · ${x.username || '—'}</span><b>${x.views.toLocaleString('ru-RU')}</b></div>`).join('') || '<div class="empty">Нет метрик</div>'}</div></div></div>`
+  );
+}
+const routes = { dashboard, content, accounts, devices, publishing, tasks, analytics, registration };
+let navigationId = 0;
+async function goPage(name) {
+  const current = ++navigationId;
+  document.querySelectorAll('nav .nav-item').forEach((n) => {
+    n.classList.toggle('active', n.dataset.page === name);
+    if (n.dataset.page === name && innerWidth <= 600)
+      n.scrollIntoView({ block: 'nearest', inline: 'center' });
+    n.setAttribute('aria-current', n.dataset.page === name ? 'page' : 'false');
+  });
+  document.getElementById('appError')?.remove();
+  view.innerHTML = '<div class="card" role="status">Загрузка…</div>';
+  try {
+    await (routes[name] || dashboard)();
+  } catch (e) {
+    if (current === navigationId) {
+      view.innerHTML = '<div class="card">Не удалось загрузить раздел. Причина указана выше.</div>';
+      showAppError(e);
+    }
+  }
+}
+function nav() {
+  document.querySelectorAll('nav .nav-item').forEach((a) => (a.onclick = () => goPage(a.dataset.page)));
+}
+function accountInfo() {
+  modalBox(
+    '<h3>Подключение аккаунта</h3><p>Профиль сохранён в FaxClip. Это ещё не авторизация на площадке. Назначьте устройство и проверьте состояние адаптера площадки в разделе «Устройства». Добавление профиля не активирует отсутствующий адаптер. Сбор статистики с площадок пока не реализован.</p><button class="btn" style="margin-top:16px" onclick="closeModal()">Понятно</button>'
+  );
+}
+function registration() {
+  shell(
+    'Регистрация',
+    'Добавление профиля в FaxClip',
+    '<div class="card"><h3>Добавить существующий аккаунт</h3><p>FaxClip сохраняет профиль, нишу, целевую аудиторию и связь с устройством. Войдите в аккаунты вручную на телефоне. Пароли площадок FaxClip не хранит; публикацию выполняет ПК-мост.</p><button class="btn" style="margin-top:16px" onclick="addAccount()">Добавить аккаунт</button></div>'
+  );
+}
+const tableObserver = new MutationObserver(() => {
+  document.querySelectorAll('#view table.table').forEach((t) => {
+    if (!t.parentElement.classList.contains('table-wrap')) {
+      const w = document.createElement('div');
+      w.className = 'table-wrap';
+      t.parentNode.insertBefore(w, t);
+      w.append(t);
+    }
+  });
+});
+tableObserver.observe(view, { childList: true, subtree: true });
+function showAppError(error) {
+  const message = error?.message || String(error || 'Неизвестная ошибка');
+  const translations = {
+    'Telegram authorization is required':
+      'Откройте приложение через кнопку меню бота в Telegram. При открытии обычной ссылки данные входа не передаются.',
+    'Invalid Telegram signature':
+      'Подпись Telegram не совпала. Проверьте, что TELEGRAM_BOT_TOKEN в Render принадлежит именно боту, через которого открыто приложение. После смены токена перезапустите сервис и заново откройте Mini App.',
+    'Telegram authorization expired':
+      'Сессия истекла. Полностью закройте Mini App и откройте её снова через кнопку бота.',
+    'Telegram user is not allowed': 'Ваш Telegram ID отсутствует в списке разрешённых пользователей.'
+  };
+  let box = document.getElementById('appError');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'appError';
+    box.setAttribute('role', 'alert');
+    box.style.cssText =
+      'background:#3b1820;color:#fff;padding:16px;margin:12px;border-radius:12px;position:relative;z-index:10000;white-space:pre-wrap';
+    document.querySelector('main').prepend(box);
+  }
+  box.replaceChildren();
+  const text = document.createElement('p');
+  text.textContent = translations[message] || message;
+  box.append(text);
+  const detail = document.createElement('small');
+  detail.textContent =
+    'Telegram: ' +
+    (telegramWebApp?.initData ? 'данные входа получены' : 'данные входа отсутствуют') +
+    ' · Ошибка: ' +
+    message;
+  box.append(detail);
+  const retry = document.createElement('button');
+  retry.className = 'btn';
+  retry.style.marginLeft = '12px';
+  retry.textContent = 'Повторить';
+  retry.onclick = () => {
+    box.remove();
+    const name = document.querySelector('nav .nav-item.active')?.dataset.page || 'dashboard';
+    Promise.resolve(
+      { dashboard, content, accounts, devices, publishing, tasks, analytics, registration }[name]()
+    ).catch(showAppError);
+  };
+  box.append(retry);
+}
+window.addEventListener('unhandledrejection', (e) => {
+  e.preventDefault();
+  showAppError(e.reason);
+});
+window.addEventListener('error', (e) => {
+  showAppError(e.error || e.message);
+});
+nav();
+goPage('dashboard');
 
-let cleanupPreview=null;
-async function confirmClearAttempts(){
- cleanupPreview=await api('/maintenance/attempts-preview');
- if(cleanupPreview.active){modalBox('<h3>Телефон занят</h3><p>Сначала безопасно остановите менеджер и дождитесь завершения текущей операции. Активная публикация не прерывается очисткой.</p><button class="btn" onclick="closeModal()">Понятно</button>');return}
- modalBox(`<h3>Удалить все попытки?</h3><p>Будут удалены ${cleanupPreview.publications} записей публикаций и ${cleanupPreview.jobs} заданий, включая очередь и остановленные попытки.</p><p style="margin-top:12px"><b>Ролики в TikTok, аккаунты, устройства и исходные клипы не удаляются.</b> Защита от повторной отправки того же видео сохраняется.</p><label style="display:block;margin-top:12px"><input id="cleanupConsent" type="checkbox"> Подтверждаю удаление всей очереди и истории попыток</label><div class="row" style="margin-top:16px"><button class="close" onclick="closeModal()">Отмена</button><button class="btn danger" id="cleanupSubmit" onclick="clearAttempts()">Удалить попытки</button></div>`);
-}
-async function clearAttempts(){
- if(!document.getElementById('cleanupConsent').checked)throw new Error('Подтвердите удаление галочкой');
- const button=document.getElementById('cleanupSubmit');if(button.disabled)return;button.disabled=true;
- try{const result=await api('/maintenance/clear-attempts',{method:'POST',body:JSON.stringify({confirmation:'DELETE_ALL_ATTEMPTS',fingerprint:cleanupPreview.fingerprint})});closeModal();await publishing();modalBox(`<h3>Очередь очищена</h3><p>Удалено записей публикаций: ${result.deleted_publications}. Заданий: ${result.deleted_jobs}. Подключения и аккаунты сохранены.</p><button class="btn" onclick="closeModal()">Готово</button>`)}catch(e){showAppError(e)}finally{button.disabled=false}
-}
-async function saveEnrollmentBackup(){
- const backup=await api('/maintenance/enrollment-backup');
- const url=URL.createObjectURL(new Blob([JSON.stringify(backup)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='faxclip-enrollment-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
- modalBox('<h3>Резервная копия подключений</h3><p>Сохраните файл приватно. Он содержит устройства, аккаунты, задачи и защиту от дублей, но не видео, очередь и скриншоты. Не отправляйте файл в чат. Само скачивание не настраивает восстановление после перезапуска.</p><button class="btn" onclick="closeModal()">Понятно</button>');
+let evidenceUrl = null;
+async function showEvidence(id) {
+  try {
+    const r = await fetch(`/api/publications/${id}/evidence`, { headers: authHeaders() });
+    if (!r.ok) throw new Error('Скриншот пока недоступен');
+    if (evidenceUrl) URL.revokeObjectURL(evidenceUrl);
+    evidenceUrl = URL.createObjectURL(await r.blob());
+    modalBox(
+      `<h3>Отчёт с телефона</h3><p>Подтверждение по интерфейсу, не проверка через API площадки.</p><img style="display:block;max-width:100%;margin:16px auto" src="${evidenceUrl}" alt="Экран телефона после задания"><button class="btn" onclick="closeModal()">Закрыть</button>`
+    );
+  } catch (e) {
+    showAppError(e);
+  }
 }
 
-function confirmLink(id){modalBox(`<h3>Добавить ссылку в отчёт</h3><p>Если видео уже вышло в TikTok, откройте его, нажмите «Поделиться» → «Копировать ссылку» и вставьте сюда. Публикация будет отмечена как выполненная, и очередь продолжится.</p><div class="form"><label>Ссылка на видео<input id="postLink" inputmode="url" autocomplete="off" placeholder="https://vt.tiktok.com/… или https://www.tiktok.com/@redmaagi/video/…"></label><div id="linkErr" class="muted"></div><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="linkSave" onclick="saveLink('${id}')">Сохранить</button></div></div>`);setTimeout(()=>document.getElementById('postLink')?.focus(),50)}
-async function saveLink(id){const b=document.getElementById('linkSave'),e=document.getElementById('linkErr');b.disabled=true;e.textContent='Проверяю ссылку…';try{const raw=document.getElementById('postLink').value;const m=raw.match(/https:\/\/[^\s]+/);await api(`/publications/${id}/confirm-link`,{method:'POST',body:JSON.stringify({url:m?m[0]:raw})});closeModal();await publishing()}catch(err){e.textContent=err.message;b.disabled=false}}
-function friendlyError(e){return ({HELPER_PUBLICATION_PREVIOUSLY_ATTEMPTED:"Это видео уже публиковалось на этот аккаунт — телефон защитил от дубля. Нажмите «Снять с очереди» и загрузите новое видео.",DUPLICATE_VIDEO_ALREADY_POSTED:"Это видео уже публиковалось на этот аккаунт. Нажмите «Снять с очереди» и загрузите новое видео.",HELPER_V14_REQUIRED:"На телефоне выключен помощник FaxClip (Спецвозможности). Менеджер попробует включить его сам.",TIKTOK_VERSION_NOT_CALIBRATED:"TikTok на телефоне обновился. Нужна версия 44.6.4 — отключите автообновление TikTok в Google Play.","Bridge lost connection; inspect app before retry":"Связь с телефоном прервалась во время публикации. Проверьте профиль TikTok: если видео вышло — «Вставить ссылку», если нет — «Снять с очереди».",LINK_COPIED_NOT_READ:"Видео опубликовано, ссылка скопирована, но телефон не смог её прочитать. Нажмите «Вставить ссылку».",LINK_READ_CLIPBOARD_NOT_FOCUSED:"Телефон не смог прочитать скопированную ссылку. Если видео вышло — нажмите «Вставить ссылку».",SUBMITTED_RESULT_NOT_CONFIRMED_NO_RETRY:"Видео отправлено, но отчёт не подтверждён. Если видео вышло — нажмите «Вставить ссылку»."})[e]||e||""}
-async function dismissPub(id,confirmed){try{await api(`/publications/${id}/dismiss`,{method:'POST',body:JSON.stringify(confirmed?{confirm:'NOT_PUBLISHED'}:{})});closeModal();await publishing()}catch(e){if(/Опубликовать/.test(e.message)){modalBox(`<h3>Видео точно не вышло?</h3><p>${esc(e.message)}</p><p>Снимайте с очереди, только если в профиле TikTok этого видео нет. Этот же файл повторно отправлен не будет — загрузите новый.</p><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="dismissPub('${id}',true)">Видео не вышло — снять</button></div>`)}else modalBox(`<h3>Не получилось</h3><p>${esc(e.message)}</p><div class="row"><button class="btn" onclick="closeModal()">Понятно</button></div>`)}}
+setInterval(() => {
+  if (document.hidden || modal.classList.contains('show')) return;
+  const page = document.querySelector('nav .nav-item.active')?.dataset.page;
+  if (page === 'publishing') publishing().catch(showAppError);
+  else if (page === 'devices') devices().catch(showAppError);
+}, 7000);
+let directUpload = null;
+async function uploadAndPublish() {
+  const accounts = await api('/accounts');
+  if (!accounts.length) throw new Error('Сначала добавьте аккаунт и назначьте устройство');
+  directUpload = { key: crypto.randomUUID(), clipId: null };
+  modalBox(
+    `<h3>Загрузить и опубликовать</h3><div class="form"><label>MP4-видео<input id="directFile" type="file" accept="video/mp4,.mp4" onchange="directUpload={key:crypto.randomUUID(),clipId:null}"></label><label>Описание<textarea id="directCaption" maxlength="2200" rows="4" placeholder="Описание публикации"></textarea></label><label>Аккаунт<select id="directAccount">${accounts.map((a) => `<option value="${a.id}" ${a.automation_ready ? '' : 'disabled'}>${esc(a.username)} · ${esc(a.platform === 'VK' ? 'VK Видео' : a.platform)}${a.automation_ready ? '' : ' — адаптер недоступен'}</option>`).join('')}</select></label><p>После подтверждения FaxClip возьмёт видео и описание из очереди. Mac должен работать, а телефон — быть подключён и разблокирован. Публикация публичная.</p><label><input id="directConsent" type="checkbox"> Разрешаю опубликовать этот ролик на выбранном аккаунте</label><label><input id="directRights" type="checkbox"> Подтверждаю права на видео и музыку, разрешаю принять подтверждение площадки</label><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="directSubmit" onclick="saveDirectPublication()">Загрузить и отправить</button></div></div>`
+  );
+}
+async function saveDirectPublication() {
+  const button = document.getElementById('directSubmit');
+  if (button.disabled) return;
+  const selectedId = document.getElementById('directAccount').value;
+  if (!selectedId)
+    throw new Error(
+      'Нет аккаунта с активным адаптером. Регистрация площадки ещё не означает готовую интеграцию.'
+    );
+  const state = directUpload,
+    file = document.getElementById('directFile').files[0],
+    caption = document.getElementById('directCaption').value,
+    accountId = document.getElementById('directAccount').value;
+  if (!file || !caption.trim()) throw new Error('Выберите MP4 и добавьте описание');
+  if (!document.getElementById('directConsent').checked || !document.getElementById('directRights').checked)
+    throw new Error('Подтвердите публикацию и права');
+  button.disabled = true;
+  const controls = [
+    ...document.querySelectorAll('#directFile,#directCaption,#directAccount,#directConsent,#directRights')
+  ];
+  controls.forEach((x) => (x.disabled = true));
+  try {
+    if (!state.clipId) {
+      await localLogin;
+      const form = new FormData();
+      form.append('file', file);
+      const r = await fetch('/api/media/upload', { method: 'POST', headers: authHeaders(), body: form });
+      const media = await r.json();
+      if (!r.ok) throw new Error(media.error || 'Загрузка не завершена');
+      const clip = await api('/clips', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: file.name,
+          source_file: media.filename,
+          duration: 0,
+          score: 0,
+          caption
+        })
+      });
+      state.clipId = clip.id;
+    }
+    if (directUpload !== state || !button.isConnected || !modal.classList.contains('show')) return;
+    await api('/publications', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': state.key },
+      body: JSON.stringify({
+        clip_id: state.clipId,
+        account_id: accountId,
+        caption,
+        confirmed: true,
+        rights_confirmed: true
+      })
+    });
+    closeModal();
+    await publishing();
+  } catch (e) {
+    showAppError(e);
+  } finally {
+    button.disabled = false;
+    controls.forEach((x) => {
+      if (x.isConnected) x.disabled = false;
+    });
+  }
+}
+
+let cleanupPreview = null;
+async function confirmClearAttempts() {
+  cleanupPreview = await api('/maintenance/attempts-preview');
+  if (cleanupPreview.active) {
+    modalBox(
+      '<h3>Телефон занят</h3><p>Сначала безопасно остановите менеджер и дождитесь завершения текущей операции. Активная публикация не прерывается очисткой.</p><button class="btn" onclick="closeModal()">Понятно</button>'
+    );
+    return;
+  }
+  modalBox(
+    `<h3>Удалить все попытки?</h3><p>Будут удалены ${cleanupPreview.publications} записей публикаций и ${cleanupPreview.jobs} заданий, включая очередь и остановленные попытки.</p><p style="margin-top:12px"><b>Ролики в TikTok, аккаунты, устройства и исходные клипы не удаляются.</b> Защита от повторной отправки того же видео сохраняется.</p><label style="display:block;margin-top:12px"><input id="cleanupConsent" type="checkbox"> Подтверждаю удаление всей очереди и истории попыток</label><div class="row" style="margin-top:16px"><button class="close" onclick="closeModal()">Отмена</button><button class="btn danger" id="cleanupSubmit" onclick="clearAttempts()">Удалить попытки</button></div>`
+  );
+}
+async function clearAttempts() {
+  if (!document.getElementById('cleanupConsent').checked) throw new Error('Подтвердите удаление галочкой');
+  const button = document.getElementById('cleanupSubmit');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const result = await api('/maintenance/clear-attempts', {
+      method: 'POST',
+      body: JSON.stringify({ confirmation: 'DELETE_ALL_ATTEMPTS', fingerprint: cleanupPreview.fingerprint })
+    });
+    closeModal();
+    await publishing();
+    modalBox(
+      `<h3>Очередь очищена</h3><p>Удалено записей публикаций: ${result.deleted_publications}. Заданий: ${result.deleted_jobs}. Подключения и аккаунты сохранены.</p><button class="btn" onclick="closeModal()">Готово</button>`
+    );
+  } catch (e) {
+    showAppError(e);
+  } finally {
+    button.disabled = false;
+  }
+}
+async function saveEnrollmentBackup() {
+  const backup = await api('/maintenance/enrollment-backup');
+  const url = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'faxclip-enrollment-backup.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+  modalBox(
+    '<h3>Резервная копия подключений</h3><p>Сохраните файл приватно. Он содержит устройства, аккаунты, задачи и защиту от дублей, но не видео, очередь и скриншоты. Не отправляйте файл в чат. Само скачивание не настраивает восстановление после перезапуска.</p><button class="btn" onclick="closeModal()">Понятно</button>'
+  );
+}
+
+function confirmLink(id) {
+  modalBox(
+    `<h3>Добавить ссылку в отчёт</h3><p>Если видео уже вышло в TikTok, откройте его, нажмите «Поделиться» → «Копировать ссылку» и вставьте сюда. Публикация будет отмечена как выполненная, и очередь продолжится.</p><div class="form"><label>Ссылка на видео<input id="postLink" inputmode="url" autocomplete="off" placeholder="https://vt.tiktok.com/… или https://www.tiktok.com/@redmaagi/video/…"></label><div id="linkErr" class="muted"></div><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="linkSave" onclick="saveLink('${id}')">Сохранить</button></div></div>`
+  );
+  setTimeout(() => document.getElementById('postLink')?.focus(), 50);
+}
+async function saveLink(id) {
+  const b = document.getElementById('linkSave'),
+    e = document.getElementById('linkErr');
+  b.disabled = true;
+  e.textContent = 'Проверяю ссылку…';
+  try {
+    const raw = document.getElementById('postLink').value;
+    const m = raw.match(/https:\/\/[^\s]+/);
+    await api(`/publications/${id}/confirm-link`, {
+      method: 'POST',
+      body: JSON.stringify({ url: m ? m[0] : raw })
+    });
+    closeModal();
+    await publishing();
+  } catch (err) {
+    e.textContent = err.message;
+    b.disabled = false;
+  }
+}
+function friendlyError(e) {
+  return (
+    {
+      HELPER_PUBLICATION_PREVIOUSLY_ATTEMPTED:
+        'Это видео уже публиковалось на этот аккаунт — телефон защитил от дубля. Нажмите «Снять с очереди» и загрузите новое видео.',
+      DUPLICATE_VIDEO_ALREADY_POSTED:
+        'Это видео уже публиковалось на этот аккаунт. Нажмите «Снять с очереди» и загрузите новое видео.',
+      HELPER_V14_REQUIRED:
+        'На телефоне выключен помощник FaxClip (Спецвозможности). Менеджер попробует включить его сам.',
+      TIKTOK_VERSION_NOT_CALIBRATED:
+        'TikTok на телефоне обновился. Нужна версия 44.6.4 — отключите автообновление TikTok в Google Play.',
+      'Bridge lost connection; inspect app before retry':
+        'Связь с телефоном прервалась во время публикации. Проверьте профиль TikTok: если видео вышло — «Вставить ссылку», если нет — «Снять с очереди».',
+      LINK_COPIED_NOT_READ:
+        'Видео опубликовано, ссылка скопирована, но телефон не смог её прочитать. Нажмите «Вставить ссылку».',
+      LINK_READ_CLIPBOARD_NOT_FOCUSED:
+        'Телефон не смог прочитать скопированную ссылку. Если видео вышло — нажмите «Вставить ссылку».',
+      SUBMITTED_RESULT_NOT_CONFIRMED_NO_RETRY:
+        'Видео отправлено, но отчёт не подтверждён. Если видео вышло — нажмите «Вставить ссылку».'
+    }[e] ||
+    e ||
+    ''
+  );
+}
+async function dismissPub(id, confirmed) {
+  try {
+    await api(`/publications/${id}/dismiss`, {
+      method: 'POST',
+      body: JSON.stringify(confirmed ? { confirm: 'NOT_PUBLISHED' } : {})
+    });
+    closeModal();
+    await publishing();
+  } catch (e) {
+    if (/Опубликовать/.test(e.message)) {
+      modalBox(
+        `<h3>Видео точно не вышло?</h3><p>${esc(e.message)}</p><p>Снимайте с очереди, только если в профиле TikTok этого видео нет. Этот же файл повторно отправлен не будет — загрузите новый.</p><div class="row"><button class="close" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="dismissPub('${id}',true)">Видео не вышло — снять</button></div>`
+      );
+    } else
+      modalBox(
+        `<h3>Не получилось</h3><p>${esc(e.message)}</p><div class="row"><button class="btn" onclick="closeModal()">Понятно</button></div>`
+      );
+  }
+}

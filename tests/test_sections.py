@@ -133,3 +133,69 @@ class AdminOwnerOnlyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AntibanLiveTests(unittest.TestCase):
+    def setUp(self):
+        with conn() as c:
+            c.execute("delete from ws_settings where key='antiban'")
+
+    def tearDown(self):
+        with conn() as c:
+            c.execute("delete from ws_settings where key='antiban'")
+
+    def test_switch_and_delay(self):
+        from test_system import new_job
+
+        self.assertFalse(request('/antiban/settings').get_json()['enabled'])
+        s = request(
+            '/antiban/settings', 'PUT', {'enabled': True, 'rules': {'quiet_from': 0, 'quiet_to': 0}}
+        ).get_json()
+        self.assertTrue(s['enabled'])
+        self.assertEqual(request('/antiban/preview').get_json()['mode'], 'live')
+        d, h = device()
+        new_job(d)
+        with conn() as c:
+            pid = c.execute(
+                "select publication_id from ui_jobs where device_id=? and status='QUEUED'", (d['id'],)
+            ).fetchone()[0]
+            aid = c.execute('select account_id from publications where id=?', (pid,)).fetchone()[0]
+            # the account already posted 5 minutes ago -> min gap 120 min must postpone the next post
+            c.execute(
+                "insert into publications values(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    str(uuid.uuid4()),
+                    None,
+                    aid,
+                    'TikTok',
+                    'PUBLISHED',
+                    None,
+                    __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+                    None,
+                    None,
+                    '2020-01-01T00:00:00+00:00',
+                ),
+            )
+        r = request('/bridge/claim', 'POST', {}, h).get_json()
+        self.assertIsNone(r['job'])
+        self.assertIn('Защита от банов', r['antiban'])
+        with conn() as c:
+            self.assertIn(
+                'Защита от банов',
+                c.execute('select error from publications where id=?', (pid,)).fetchone()[0],
+            )
+        self.assertEqual(request('/antiban/log').get_json()[0]['decision'], 'delay')
+        request('/antiban/settings', 'PUT', {'enabled': False})
+        with conn() as c:
+            c.execute('update ui_jobs set available=0 where publication_id=?', (pid,))
+        self.assertIsNotNone(request('/bridge/claim', 'POST', {}, h).get_json()['job'])
+        with conn() as c:
+            self.assertIsNone(c.execute('select error from publications where id=?', (pid,)).fetchone()[0])
+
+    def test_dashboard_views_are_real(self):
+        with conn() as c:
+            c.execute(
+                "insert into ws_video_metrics(id,publication_id,account_id,url,views,likes,comments,shares,saves,source,created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+                (str(uuid.uuid4()), 'p-dash', None, 'u', 1234, 5, 1, 0, 0, 'test', '2026-01-01T00:00:00'),
+            )
+        self.assertGreaterEqual(request('/dashboard').get_json()['views'], 1234)

@@ -1,12 +1,12 @@
-/* FaxClip «Защита от банов» — TEST MODE: shows what protection would do, changes nothing. */
+/* FaxClip «Защита от банов»: on/off switch, rules stored on the server, live decisions log and preview. */
 (function () {
   const KEY = 'fxAntibanRules';
   const S = { open: {} };
   const LV = { high: ['Высокий риск', 'red'], medium: ['Средний риск', 'red'], low: ['Низкий риск', ''] };
   const DEC = {
     allow: ['Пройдёт как есть', ''],
-    delay: ['Задержала бы', 'red'],
-    block: ['Придержала бы', 'red']
+    delay: ['Перенос', 'red'],
+    block: ['Придержать', 'red']
   };
   const fmt = (t) =>
     t
@@ -21,13 +21,7 @@
     const [l, c] = m[k] || [k, ''];
     return `<span class="pill"><i class="dot ${c}"></i>${l}</span>`;
   };
-  const rules = () => {
-    try {
-      return JSON.parse(localStorage.getItem(KEY) || '{}');
-    } catch (e) {
-      return {};
-    }
-  };
+  localStorage.removeItem(KEY); // rules now live on the server
   const bar = (v, max, label) => {
     const p = max ? Math.min(100, Math.round((v / max) * 100)) : v ? 100 : 0;
     return `<div class="ab-bar"><div class="muted">${label}: <b>${v}</b> / ${max || 0}</div><div class="ab-track"><i style="width:${p}%" class="${v > max ? 'over' : ''}"></i></div></div>`;
@@ -62,8 +56,9 @@
       ${one('device_stagger_minutes', 'Разнос постов на одном телефоне, мин')}
       </div>
       <label class="ws-check"><input type="checkbox" id="ab_require_proxy" ${r.require_proxy ? 'checked' : ''}> Предупреждать, если у телефона нет прокси</label>
-      <div class="row"><button class="btn secondary" onclick="abReset()">Вернуть по умолчанию</button><button class="btn" onclick="abApply()">Пересчитать</button></div>
-      <p class="muted">Правила сохраняются только в этом браузере и используются для расчёта. На сервере ничего не меняется.</p></div>`;
+      <label class="ws-check"><input type="checkbox" id="ab_hold_until_warm" ${r.hold_until_warm ? 'checked' : ''}> Не публиковать с аккаунта, пока он не прогрет (иначе только предупреждение)</label>
+      <div class="row"><button class="btn secondary" onclick="abReset()">Вернуть по умолчанию</button><button class="btn" onclick="abApply()">Сохранить правила</button></div>
+      <p class="muted">Правила хранятся на сервере и сразу применяются к публикациям и прогреву.</p></div>`;
   }
   window.abApply = () => {
     const d = window._abData.defaults,
@@ -76,11 +71,21 @@
       if (typeof d[k] === 'number') out[k] = +document.getElementById('ab_' + k).value;
     }
     out.require_proxy = document.getElementById('ab_require_proxy').checked;
-    localStorage.setItem(KEY, JSON.stringify(out));
-    page();
+    out.hold_until_warm = document.getElementById('ab_hold_until_warm').checked;
+    api('/antiban/settings', { method: 'PUT', body: JSON.stringify({ rules: out }) })
+      .then(page)
+      .catch(showAppError);
   };
   window.abReset = () => {
-    localStorage.removeItem(KEY);
+    api('/antiban/settings', { method: 'PUT', body: JSON.stringify({ rules: {} }) })
+      .then(page)
+      .catch(showAppError);
+  };
+  window.abSwitch = async (on) => {
+    if (!on && !confirm('Выключить защиту? Публикации и прогрев пойдут без ограничений.')) return;
+    await api('/antiban/settings', { method: 'PUT', body: JSON.stringify({ enabled: on }) }).catch(
+      showAppError
+    );
     page();
   };
   window.abToggle = (id) => {
@@ -89,7 +94,7 @@
   };
 
   async function page() {
-    const d = await api('/antiban/preview?rules=' + encodeURIComponent(JSON.stringify(rules())));
+    const [d, log] = await Promise.all([api('/antiban/preview'), api('/antiban/log').catch(() => [])]);
     window._abData = d;
     const s = d.summary;
     const acc = d.accounts
@@ -131,17 +136,32 @@
       : '';
     shell(
       'Защита от банов',
-      'Тестовый режим: показываем, что сделала бы защита',
-      `<div class="card fx-banner warning"><span><b>Тестовый режим.</b> Защита ничего не блокирует и не переносит. Расчёт только читает данные: соединение с базой открыто в режиме «только чтение».</span></div>
+      d.enabled ? 'Защита включена: лимиты применяются к публикациям и прогреву' : 'Защита выключена',
+      `${
+        d.enabled
+          ? `<div class="card fx-banner"><span><b>🛡 Защита включена.</b> Когда телефон берёт публикацию, защита проверяет лимиты, интервалы, ночные часы и паузу после капчи: при нарушении переносит пост на безопасное время, при множестве сбоев — придерживает. В прогреве ограничивает лайки и подписки суточным лимитом. Ничего не удаляет.</span><button class="btn secondary" onclick="abSwitch(false)">Выключить</button></div>`
+          : `<div class="card fx-banner warning"><span><b>Защита выключена.</b> Ниже показано, что она сделала бы. Публикации и прогрев идут без ограничений.</span><button class="btn" onclick="abSwitch(true)">Включить защиту</button></div>`
+      }
       <div class="grid adm-cards">
         <div class="card"><div class="muted">Аккаунтов проверено</div><div class="adm-num">${s.accounts}</div><div class="muted">${s.high} высокий · ${s.medium} средний · ${s.low} низкий риск</div></div>
         <div class="card"><div class="muted">Публикаций в очереди (48 ч)</div><div class="adm-num">${s.queue}</div></div>
-        <div class="card"><div class="muted">Задержала бы</div><div class="adm-num">${s.would_delay}</div></div>
-        <div class="card"><div class="muted">Придержала бы</div><div class="adm-num">${s.would_block}</div></div>
+        <div class="card"><div class="muted">Перенос</div><div class="adm-num">${s.would_delay}</div></div>
+        <div class="card"><div class="muted">Придержать</div><div class="adm-num">${s.would_block}</div></div>
         <div class="card"><div class="muted">Предупреждений</div><div class="adm-num">${s.warnings}</div></div>
       </div>
       ${dw}
-      <div class="card"><h3>Очередь публикаций: что изменилось бы</h3>${q}</div>
+      <div class="card"><h3>Очередь публикаций: ${d.enabled ? 'что сделает защита' : 'что изменилось бы'}</h3>${q}</div>
+      <div class="card"><h3>Журнал защиты</h3>${
+        log.length
+          ? `<div class="list">${log
+              .slice(0, 30)
+              .map(
+                (x) =>
+                  `<div class="item"><div><b>${esc(x.username || '—')}</b> · ${x.kind === 'warmup' ? 'прогрев пропущен' : x.decision === 'block' ? 'публикация придержана' : 'публикация перенесена'} <span class="muted">${fmt(x.created_at)}${x.new_time ? ' → ' + fmt(x.new_time) : ''}</span><div class="muted">${x.reasons.map(esc).join(' ')}</div></div></div>`
+              )
+              .join('')}</div>`
+          : '<div class="empty">Защита пока ничего не меняла</div>'
+      }</div>
       <h3 style="margin:18px 4px 8px">Аккаунты</h3>${acc || '<div class="card empty">Аккаунтов пока нет</div>'}
       <details class="card"><summary><b>Правила защиты</b> <span class="muted">— можно менять и сразу смотреть результат</span></summary>${rulesForm(d.rules, d.defaults)}</details>`,
       '<button class="btn" onclick="goPage(\'antiban\')">Пересчитать</button>'

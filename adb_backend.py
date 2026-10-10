@@ -495,12 +495,27 @@ def register_adb(app, conn, now, uploads):
             ).fetchone()
             if not row:
                 return jsonify(job=None)
+            gate = None
+            try:
+                import antiban
+
+                gate = antiban.gate_publication(c, row)
+            except Exception as exc:  # protection must never stop publishing by itself
+                print('antiban gate error', type(exc).__name__, exc, flush=True)
+            if gate:
+                _, when_ts, text = gate
+                c.execute('update ui_jobs set available=? where id=?', (when_ts, row['id']))
+                c.execute('update publications set error=? where id=?', (text[:480], row['publication_id']))
+                return jsonify(job=None, antiban=text)
             lease = secrets.token_urlsafe(32)
             c.execute(
                 "update ui_jobs set status='RUNNING',lease_until=?,lease_hash=? where id=?",
                 (time.time() + TTL, digest(lease), row['id']),
             )
-            c.execute("update publications set status='RUNNING' where id=?", (row['publication_id'],))
+            c.execute(
+                "update publications set status='RUNNING',error=case when error like 'Защита от банов%' then null else error end where id=?",
+                (row['publication_id'],),
+            )
         return jsonify(
             job=dict(id=row['id'], lease=lease, payload=json.loads(row['payload']), phase=row['phase'])
         )

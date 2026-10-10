@@ -1,9 +1,15 @@
-"""Ban protection — TEST MODE (dry run).
+"""Ban protection.
 
-Reads accounts, the publication queue and warm-up activity and shows what protection *would* do:
-which posts it would delay or hold, which accounts it would pause and why. It never writes:
-the connection is switched to read-only (SQLite `query_only`, PostgreSQL `READ ONLY` transaction).
+* Preview (always available, read-only): what protection does with accounts and the publication queue.
+* Live mode (switch in the UI, on by default via FAXCLIP_ANTIBAN=1): the same rules are enforced
+  at the moment a phone asks for work — a publication is postponed (limit, gap, night hours,
+  captcha pause) or held (too many failures), warm-up likes/follows are capped by daily limits
+  and sessions are skipped during a captcha pause. Every decision is written to ws_antiban_log.
+  Protection never deletes anything; if it fails itself, publishing continues as before.
 """
+
+import os
+import uuid
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -31,7 +37,12 @@ DEFAULT_RULES = {
     'max_accounts_per_device': 3,
     'device_stagger_minutes': 10,
     'require_proxy': True,
+    'hold_until_warm': False,
 }
+SCHEMA = '''
+CREATE TABLE IF NOT EXISTS ws_antiban_log(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,account_id TEXT,publication_id TEXT,
+  kind TEXT,decision TEXT,new_time TEXT,reasons TEXT);
+'''
 
 
 def merge_rules(raw):
@@ -49,6 +60,8 @@ def merge_rules(raw):
         if isinstance(raw.get(k), dict):
             for st in STAGES:
                 r[k][st] = num(raw[k].get(st), 0, 1000, r[k][st])
+    if 'hold_until_warm' in raw:
+        r['hold_until_warm'] = bool(raw['hold_until_warm'])
     for k, lo, hi in (
         ('min_gap_minutes', 0, 1440),
         ('quiet_from', 0, 23),
@@ -84,7 +97,7 @@ def _readonly(c):
     return c
 
 
-def analyze(c, rules, now=None):
+def analyze(c, rules, now=None, only=None):
     now = now or datetime.now(timezone.utc)
     day_ago, two_days = now - timedelta(days=1), now - timedelta(days=2)
     q = lambda sql, *a: [dict(r) for r in c.execute(sql, a).fetchall()]  # noqa: E731
@@ -320,6 +333,8 @@ def analyze(c, rules, now=None):
 
     horizon = now + timedelta(hours=48)
     upcoming = [p for p in pubs if p['status'] in UPCOMING and (_dt(p['scheduled_at']) or now) <= horizon]
+    if only:
+        upcoming = [p for p in pubs if p['id'] == only]
     upcoming.sort(key=lambda p: _dt(p['scheduled_at']) or now)
     device_last = {}
     names = {a['id']: a for a in accounts}
@@ -333,7 +348,7 @@ def analyze(c, rules, now=None):
         if st['blocked']:
             decision = 'block'
             reasons.append('Много неудачных публикаций за сутки — нужна ручная проверка аккаунта.')
-        if st['needs_warm']:
+        if st['needs_warm'] and rules.get('hold_until_warm'):
             decision = 'block'
             reasons.append('Аккаунт ещё не прогрет перед первой публикацией.')
         if decision != 'block':
@@ -395,6 +410,7 @@ def analyze(c, rules, now=None):
     out_accounts.sort(key=lambda x: -x['score'])
     return {
         'mode': 'test',
+        'state': state,
         'generated_at': now.isoformat(),
         'rules': rules,
         'summary': {
@@ -413,19 +429,133 @@ def analyze(c, rules, now=None):
     }
 
 
+def settings(c):
+    row = c.execute("select value from ws_settings where key='antiban'").fetchone()
+    try:
+        x = json.loads(row['value']) if row and row['value'] else {}
+    except ValueError:
+        x = {}
+    enabled = x['enabled'] if 'enabled' in x else os.getenv('FAXCLIP_ANTIBAN', '1') != '0'
+    return {'enabled': bool(enabled), 'rules': merge_rules(x.get('rules') or {})}
+
+
+def save_settings(c, enabled, rules):
+    c.execute(
+        "insert into ws_settings values('antiban',?) on conflict(key) do update set value=excluded.value",
+        (json.dumps({'enabled': bool(enabled), 'rules': merge_rules(rules or {})}, ensure_ascii=False),),
+    )
+
+
+def _log(c, account_id, publication_id, kind, decision, new_time, reasons):
+    c.execute(
+        'insert into ws_antiban_log(id,created_at,account_id,publication_id,kind,decision,new_time,reasons) values(?,?,?,?,?,?,?,?)',
+        (
+            str(uuid.uuid4()),
+            datetime.now(timezone.utc).isoformat(),
+            account_id,
+            publication_id,
+            kind,
+            decision,
+            new_time,
+            json.dumps(reasons, ensure_ascii=False),
+        ),
+    )
+
+
+def gate_publication(c, job):
+    """Called when a phone claims a publication. Returns None (go) or (decision, when_ts, text)."""
+    cfg = settings(c)
+    if not cfg['enabled']:
+        return None
+    d = analyze(c, cfg['rules'], only=job['publication_id'])
+    item = (d['queue'] or [None])[0]
+    if not item or item['decision'] == 'allow':
+        return None
+    if item['decision'] == 'block':
+        when = datetime.now(timezone.utc) + timedelta(hours=1)
+        text = 'Защита от банов придержала публикацию: ' + ' '.join(item['reasons'])
+    else:
+        when = _dt(item['new_time'])
+        text = f"Защита от банов перенесла на {item['local_time']} (время телефона): " + ' '.join(
+            item['reasons']
+        )
+    _log(
+        c,
+        job['account_id'],
+        job['publication_id'],
+        'publication',
+        item['decision'],
+        when.isoformat(),
+        item['reasons'],
+    )
+    return item['decision'], when.timestamp(), text
+
+
+def gate_warm(c, account_id):
+    """Called when the Mac claims a warm-up session: pause during captcha, cap likes/follows."""
+    cfg = settings(c)
+    if not cfg['enabled']:
+        return None
+    d = analyze(c, cfg['rules'])
+    st = d['state'].get(account_id)
+    a = next((x for x in d['accounts'] if x['account_id'] == account_id), None)
+    if not st or not a:
+        return None
+    if st['pause_until']:
+        reason = f"Пауза после капчи до {st['pause_until'].astimezone(st['zone']):%d.%m %H:%M}"
+        _log(c, account_id, None, 'warmup', 'skip', st['pause_until'].isoformat(), [reason])
+        return {'skip': reason}
+    return {
+        'likes_left': max(0, a['likes_limit'] - a['likes_today']),
+        'follows_left': max(0, a['follows_limit'] - a['follows_today']),
+    }
+
+
 def register_antiban(app, conn):
+    @app.route('/api/antiban/settings', methods=['GET', 'PUT'])
+    def antiban_settings():
+        c = conn()
+        if request.method == 'PUT':
+            x = request.get_json(silent=True) or {}
+            cur = settings(c)
+            save_settings(c, x.get('enabled', cur['enabled']), x.get('rules', cur['rules']))
+            c.commit()
+        return jsonify(settings(c))
+
+    @app.get('/api/antiban/log')
+    def antiban_log():
+        c = conn()
+        rows = c.execute(
+            'select l.*,a.username from ws_antiban_log l left join accounts a on a.id=l.account_id order by l.created_at desc limit 100'
+        ).fetchall()
+        out = []
+        for r in rows:
+            r = dict(r)
+            try:
+                r['reasons'] = json.loads(r['reasons'] or '[]')
+            except ValueError:
+                r['reasons'] = []
+            out.append(r)
+        return jsonify(out)
+
     @app.get('/api/antiban/preview')
     def antiban_preview():
         try:
             raw = json.loads(request.args.get('rules') or '{}')
         except ValueError:
             raw = {}
-        rules = merge_rules(raw)
-        c = _readonly(conn())
+        base = conn()
+        cfg = settings(base)
+        base.rollback()
+        rules = merge_rules(raw) if raw else cfg['rules']
+        c = _readonly(base)
         try:
             data = analyze(c, rules)
         finally:
             c.rollback()
+        data.pop('state', None)
+        data['enabled'] = cfg['enabled']
+        data['mode'] = 'live' if cfg['enabled'] else 'test'
         data['defaults'] = DEFAULT_RULES
         data['stage_names'] = STAGES
         return jsonify(data)

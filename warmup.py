@@ -578,6 +578,16 @@ def register_warmup(app, conn, now, audit):
             if not sc or not ap:
                 finish(c, t, 'failed', 'Сценарий или аккаунт удалены')
                 return jsonify(task=None)
+            guard = None
+            try:
+                import antiban
+
+                guard = antiban.gate_warm(c, t['account_id'])
+            except Exception as exc:  # protection must never stop warm-up by itself
+                print('antiban warm gate error', type(exc).__name__, exc, flush=True)
+            if guard and guard.get('skip'):
+                finish(c, t, 'missed', 'Защита от банов: ' + guard['skip'])
+                return jsonify(task=None, reason='antiban')
             dur = t['duration'] or 600
             c.execute(
                 "update ws_tasks set status='running',started_at=?,lease_until=? where id=?",
@@ -612,7 +622,15 @@ def register_warmup(app, conn, now, audit):
                             'max_likes',
                             'max_follows',
                         )
-                    },
+                    }
+                    | (
+                        {
+                            'max_likes': min(sc['max_likes'], guard['likes_left']),
+                            'max_follows': min(sc['max_follows'], guard['follows_left']),
+                        }
+                        if guard
+                        else {}
+                    ),
                 )
             )
 

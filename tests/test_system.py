@@ -9,6 +9,7 @@ os.environ['VERTICALOS_DATA_DIR'] = tempfile.mkdtemp(prefix='faxclip-adb-tests-'
 os.environ['TELEGRAM_BOT_TOKEN'] = 'TEST_NOT_A_REAL_TOKEN'
 os.environ['TELEGRAM_ALLOWED_USER_IDS'] = '8784706094'
 os.environ['ALLOW_DEV_AUTH'] = '0'
+os.environ['FAXCLIP_ANTIBAN'] = '0'  # tests switch protection on explicitly
 from app import app, init_db, conn, UPLOAD
 from adb_control import ADB, ScreenError, parse_nodes, matches
 

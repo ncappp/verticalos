@@ -206,7 +206,7 @@ async function dashboard() {
       ['accounts', metric('Аккаунты', d.accounts, 'подключено', 'user')],
       ['devices', metric('Устройства', d.devices, 'онлайн', 'phone')],
       ['clips', metric('Клипы', d.clips, 'в библиотеке', 'clip')],
-      ['views', metric('Просмотры', n(d.views), 'собрано', 'eye')]
+      ['views', metric('Просмотры', n(d.views), 'всего по всем роликам', 'eye')]
     ]
       .map(([k, h]) =>
         h.replace(
@@ -302,7 +302,7 @@ async function dashPick(k) {
       const r = await api('/analytics/v2?days=30');
       const t = r.totals || {};
       html =
-        `<div class="dd-grid">${num('Просмотры', n(t.views), 'за 30 дней')}${num('Лайки', n(t.likes))}${num('Комментарии', n(t.comments))}${num('Подписчики', n(t.followers))}</div>` +
+        `<div class="dd-grid">${num('Просмотры', n(t.views), 'всего, по последним данным')}${num('Лайки', n(t.likes))}${num('Комментарии', n(t.comments))}${num('Подписчики', n(t.followers))}</div>` +
         `<div class="list">${
           (r.accounts || [])
             .slice(0, 8)

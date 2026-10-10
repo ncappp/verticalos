@@ -297,6 +297,9 @@ def create_schema(c):
 
     c.executescript(ADB_SCHEMA)
     c.executescript(MAINT_SCHEMA)
+    from antiban import SCHEMA as ANTIBAN_SCHEMA
+
+    c.executescript(ANTIBAN_SCHEMA)
     c.commit()
 
 

@@ -65,7 +65,7 @@ jobs:
       - name: Start FaxClip (dev auth, throwaway data)
         run: |
           mkdir -p /tmp/e2edata
-          PORT=8010 VERTICALOS_DATA_DIR=/tmp/e2edata ALLOW_DEV_AUTH=1 FAXCLIP_TG_BACKUP=0 \
+          PORT=8010 VERTICALOS_DATA_DIR=/tmp/e2edata ALLOW_DEV_AUTH=1 FAXCLIP_TG_BACKUP=0 FAXCLIP_ANTIBAN=0 \
           TELEGRAM_ALLOWED_USER_IDS=8784706094 nohup python app.py > /tmp/server.log 2>&1 &
           for i in $(seq 1 30); do curl -fsS http://localhost:8010/api/health && break; sleep 1; done
       - name: Post → publication → status

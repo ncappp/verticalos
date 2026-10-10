@@ -23,5 +23,7 @@ services:
         value: "8784706094"
       - key: FAXCLIP_WORKER
         value: embedded
+      - key: FAXCLIP_ANTIBAN
+        value: "1"
       - key: FAXCLIP_PRODUCTION
         value: "1"

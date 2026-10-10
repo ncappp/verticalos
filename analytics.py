@@ -265,6 +265,30 @@ def register_analytics(app, conn, now, audit):
             q.format(w='where created_at<=?' if before else ''), ((before,) if before else ())
         ).fetchall()
 
+    # The dashboard shows the same real numbers as «Аналитика»: latest stats of every tracked video
+    # (TikTok public stats / manual input) plus the old manual metrics table.
+    orig_dashboard = app.view_functions.get('dashboard')
+
+    if orig_dashboard:
+
+        def dashboard_real():
+            r = orig_dashboard()
+            d = r.get_json() if hasattr(r, 'get_json') else None
+            if not isinstance(d, dict):
+                return r
+            maybe_sync()
+            with conn() as c:
+                vv = latest_video(c)
+                aa = latest_account(c)
+            d['views'] = int(d.get('views') or 0) + sum(x['views'] or 0 for x in vv)
+            d['likes'] = int(d.get('likes') or 0) + sum(x['likes'] or 0 for x in vv)
+            d['comments'] = int(d.get('comments') or 0) + sum(x['comments'] or 0 for x in vv)
+            d['followers'] = int(d.get('followers') or 0) + sum(x['followers'] or 0 for x in aa)
+            d['tracked_videos'] = len(vv)
+            return jsonify(d)
+
+        app.view_functions['dashboard'] = dashboard_real
+
     @app.get('/api/analytics/v2')
     def analytics_v2():
         maybe_sync()

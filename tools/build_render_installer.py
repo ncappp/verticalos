@@ -44,7 +44,7 @@ def main():
     if r.returncode:subprocess.run(['launchctl','kickstart','-k',f'gui/{uid}/{LABEL}'],capture_output=True)
     for _ in range(20):
         time.sleep(1)
-        if log.exists() and 'RENDER_AGENT_V1 started' in log.read_text(errors='replace'):
+        if log.exists() and 'RENDER_AGENT_V2 started' in log.read_text(errors='replace'):
             print('ГОТОВО. Склейка установлена. Папки для сцен: Загрузки/FaxClip/Склейка. Mini App → Склейка.');return
     tail=log.read_text(errors='replace')[-400:] if log.exists() else ''
     raise SystemExit('Склейка установлена, но не запустилась. Пришлите этот текст: '+tail.replace('\n',' | '))

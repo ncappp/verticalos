@@ -45,7 +45,10 @@ FEATURES = {
     'antiban': 'Защита от банов',
 }
 FEATURE_PATHS = [
-    ('assembly', ('/api/recipes', '/api/render-jobs', '/api/sources', '/api/render-install-command')),
+    (
+        'assembly',
+        ('/api/recipes', '/api/render-jobs', '/api/sources', '/api/render-install-command', '/api/banners'),
+    ),
     ('warmup', ('/api/warmup', '/api/scenarios', '/api/warm-install-command')),
     (
         'analytics',
@@ -125,8 +128,14 @@ def owner_id():
 
 
 def admin_ids():
-    raw = os.getenv('FAXCLIP_ADMIN_IDS', '') or owner_id()
-    return {x for x in raw.replace(' ', '').split(',') if x.isdigit()}
+    """The admin panel belongs to the owner only. FAXCLIP_ADMIN_IDS can narrow access but never adds
+    other people: any id there that is not the owner is ignored."""
+    owner = owner_id()
+    if not owner:
+        return set()
+    raw = os.getenv('FAXCLIP_ADMIN_IDS', '')
+    listed = {x for x in raw.replace(' ', '').split(',') if x.isdigit()}
+    return {owner} if not listed or owner in listed else set()
 
 
 def tenant_for(tg_id):

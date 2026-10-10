@@ -141,6 +141,30 @@ def register_screen(app, conn, now):
             s["viewer_until"] = max(s["viewer_until"], time.time() + 25)
         return jsonify(ok=True, id=cmd["id"])
 
+    # ----- installer for the Mac screen agent (public software only, no tokens) -----
+    import hashlib, os, shlex
+    from flask import send_from_directory
+
+    @app.get('/screen-install.py')
+    def screen_installer():
+        return send_from_directory(
+            os.path.join(app.root_path, 'bridge'), 'screen_install.py', mimetype='text/plain'
+        )
+
+    @app.get('/api/screen-install-command')
+    def screen_install_command():
+        with open(os.path.join(app.root_path, 'bridge', 'screen_install.py'), 'rb') as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+        boot = (
+            "import requests,hashlib; r=requests.get('https://verticalos-rxdl.onrender.com/screen-install.py',timeout=60); r.raise_for_status(); s=r.content; hashlib.sha256(s).hexdigest()=="
+            + repr(sha)
+            + " or __import__('sys').exit('Checksum mismatch'); exec(compile(s,'screen_install.py','exec'))"
+        )
+        return jsonify(
+            command='"$HOME/Downloads/faxclip-telegram-bridge-v14/.venv/bin/python" -c ' + shlex.quote(boot),
+            sha256=sha,
+        )
+
     # ----- bridge (Mac screen agent) -----
     @app.get('/api/bridge/screen/poll')
     def bridge_screen_poll():

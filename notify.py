@@ -70,9 +70,9 @@ def emit(c, level, event_type, title, message="", page=None, link=None):
 _now = lambda: time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime())
 
 AUDIT = {
-    ("create", "persona"): "Создана персона",
-    ("update", "persona"): "Изменена персона",
-    ("delete", "persona"): "Удалена персона",
+    ("create", "persona"): "Создан агент",
+    ("update", "persona"): "Изменён агент",
+    ("delete", "persona"): "Удалён агент",
     ("create", "proxy"): "Добавлен прокси",
     ("update", "proxy"): "Изменён прокси",
     ("delete", "proxy"): "Удалён прокси",

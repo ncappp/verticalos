@@ -53,6 +53,25 @@ function closeModal() {
 modal.onclick = (e) => {
   if (e.target === modal) closeModal();
 };
+/* Enter confirms the open dialog (main button), Ctrl/Cmd+Enter inside a multi-line field, Esc closes it. */
+document.addEventListener('keydown', (e) => {
+  if (!modal.classList.contains('show') || e.isComposing) return;
+  if (e.key === 'Escape') return closeModal();
+  if (e.key !== 'Enter' || e.shiftKey || e.altKey) return;
+  const box = modal.querySelector('.modalbox');
+  const t = e.target;
+  if (!box || (t !== document.body && !box.contains(t))) return;
+  const tag = t.tagName;
+  if (tag === 'BUTTON' || tag === 'A' || tag === 'SELECT') return;
+  if ((tag === 'TEXTAREA' || t.isContentEditable) && !(e.ctrlKey || e.metaKey)) return;
+  const main = [...box.querySelectorAll('button.btn')].filter(
+    (b) => !b.disabled && b.offsetParent !== null && !/\b(secondary|danger|ghost)\b/.test(b.className)
+  );
+  const inField = tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable;
+  if (!main.length || (!inField && main.length !== 1)) return;
+  e.preventDefault();
+  main[main.length - 1].click();
+});
 let lastShell = '';
 function countUp(el) {
   const raw = el.textContent.trim();
@@ -158,8 +177,8 @@ async function dashboard() {
           ? 'Добрый день'
           : 'Добрый вечер';
   shell(
-    'Главная',
-    'Автоматизируй процесс!',
+    '',
+    '',
     `
 <div class="hero card"><div class="hero-copy"><span class="eyebrow"><i class="live"></i>Система активна</span><h2>${greet}!<br><span>Контент работает за тебя.</span></h2><p>${now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })} · ${n(d.publications)} публикаций · ${n(d.devices)} устройств онлайн</p><div class="hero-actions"><button class="btn" onclick="goPage('content')">${ic('upload')}Загрузить видео</button><button class="btn secondary" onclick="goPage('publishing')">Очередь публикаций ${ic('arrow')}</button></div><div class="ticker" aria-hidden="true"><div class="ticker-track">${[
       'TikTok',
@@ -183,12 +202,135 @@ async function dashboard() {
       .join(
         ''
       )}</div></div></div><span class="beam" aria-hidden="true"></span><div class="hero-art" aria-hidden="true"><div class="orbit o1"></div><div class="orbit o2"></div><div class="orbit o3"></div><div class="core">${ic('bolt')}</div><span class="sat s1">${ic('clip')}</span><span class="sat s2">${ic('phone')}</span><span class="sat s3">${ic('heart')}</span></div></div>
-<div class="grid" style="margin-top:14px">${metric('Аккаунты', d.accounts, 'подключено', 'user')}${metric('Устройства', d.devices, 'онлайн', 'phone')}${metric('Клипы', d.clips, 'в библиотеке', 'clip')}${metric('Просмотры', n(d.views), 'собрано', 'eye')}</div>
+<div class="grid dash-tiles" style="margin-top:14px">${[
+      ['accounts', metric('Аккаунты', d.accounts, 'подключено', 'user')],
+      ['devices', metric('Устройства', d.devices, 'онлайн', 'phone')],
+      ['clips', metric('Клипы', d.clips, 'в библиотеке', 'clip')],
+      ['views', metric('Просмотры', n(d.views), 'собрано', 'eye')]
+    ]
+      .map(([k, h]) =>
+        h.replace(
+          'class="card metric-card"',
+          `class="card metric-card" data-tile="${k}" tabindex="0" role="button"`
+        )
+      )
+      .join('')}</div><div id="dashDetail" class="dash-detail"></div>
 <div class="grid2"><div class="card"><div class="card-head"><b>Быстрые действия</b><span class="pill">4 действия</span></div><div class="quick-actions"><button class="qa qa-lime" onclick="goPage('accounts')"><span>${ic('user')}</span>Аккаунт<small>Добавить профиль</small></button><button class="qa qa-lime" onclick="goPage('devices')"><span>${ic('phone')}</span>Телефон<small>Подключить по коду</small></button><button class="qa" onclick="goPage('content')"><span>${ic('upload')}</span>Видео<small>Загрузить клипы</small></button><button class="qa" onclick="goPage('tasks')"><span>${ic('task')}</span>Задача<small>Поставить цель</small></button></div></div>
 <div class="card tasks-card"><div class="card-head"><b>Задачи</b><span class="pill">${d.task_done} / ${d.task_target}</span></div><div class="ring-wrap"><div class="ring-box">${ring(d.task_percent)}<div class="ring-num"><b>${d.task_percent}%</b><small>выполнено</small></div></div><div class="ring-legend"><div><i class="lg-lime"></i><span>Готово</span><b>${n(d.task_done)}</b></div><div><i class="lg-gray"></i><span>Осталось</span><b>${n(Math.max(0, d.task_target - d.task_done))}</b></div><div><i class="lg-line"></i><span>Цель</span><b>${n(d.task_target)}</b></div></div></div></div></div>
-<div class="card summary" style="margin-top:14px"><div class="card-head"><div><b>Сводка</b><p class="small">Ключевые показатели по всем площадкам</p></div><span class="pill"><i class="dot"></i>Данные приложения</span></div><div class="stats">${stat('eye', 'Просмотры', n(d.views), 'lime', 0)}${stat('send', 'Опубликовано клипов', n(d.publications), 'glass', 1)}${stat('heart', 'Лайки', n(d.likes), 'glass', 2)}${stat('users', 'Новые подписчики', n(d.followers), 'lime', 3)}</div></div>`
+`
   );
+  dashPick(localStorage.getItem('fxDashTile') || 'accounts');
 }
+/* Dashboard tiles: click (or Enter) a tile to highlight it and show its statistics below. */
+const DASH_TITLES = { accounts: 'Аккаунты', devices: 'Устройства', clips: 'Клипы', views: 'Просмотры' };
+async function dashPick(k) {
+  const box = document.getElementById('dashDetail');
+  if (!box || !DASH_TITLES[k]) return;
+  localStorage.setItem('fxDashTile', k);
+  document.querySelectorAll('.dash-tiles > [data-tile]').forEach((t) => {
+    t.classList.toggle('on', t.dataset.tile === k);
+    t.setAttribute('aria-pressed', t.dataset.tile === k ? 'true' : 'false');
+  });
+  box.innerHTML = `<div class="card"><b>${DASH_TITLES[k]}</b><div class="muted">Загрузка…</div></div>`;
+  const n = (v) => Number(v || 0).toLocaleString('ru-RU');
+  const num = (label, v, hint = '') =>
+    `<div class="card"><div class="muted">${label}</div><div class="dd-num">${v}</div>${hint ? `<div class="muted">${hint}</div>` : ''}</div>`;
+  const cnt = (arr, f) => arr.reduce((m, x) => ((m[f(x)] = (m[f(x)] || 0) + 1), m), {});
+  const when = (t) =>
+    t
+      ? new Date(t).toLocaleString('ru-RU', {
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : '—';
+  let html = '';
+  try {
+    if (k === 'accounts') {
+      const a = await api('/accounts');
+      const byP = cnt(a, (x) => x.platform || '—');
+      html =
+        `<div class="dd-grid">${num('Всего', a.length)}${num('С устройством', a.filter((x) => x.device_id).length)}${num('Готовы к автопубликации', a.filter((x) => x.automation_ready).length)}${Object.entries(
+          byP
+        )
+          .map(([p, c]) => num(esc(p), c))
+          .join('')}</div>` +
+        `<div class="list">${
+          a
+            .slice(0, 8)
+            .map(
+              (x) =>
+                `<div class="item row"><span>${esc(x.platform)} · ${esc(x.username || '—')}</span><span class="muted">${esc(x.device_name || (x.device_id ? 'устройство назначено' : 'без устройства'))}</span></div>`
+            )
+            .join('') || '<div class="empty">Аккаунтов пока нет</div>'
+        }</div>`;
+    } else if (k === 'devices') {
+      const d = await api('/devices');
+      const on = d.filter((x) => x.status === 'ONLINE');
+      html =
+        `<div class="dd-grid">${num('Всего', d.length)}${num('Онлайн', on.length)}${num('Не в сети', d.length - on.length)}${num('Средний заряд', on.length ? Math.round(on.reduce((s, x) => s + (x.battery || 0), 0) / on.length) + '%' : '—')}</div>` +
+        `<div class="list">${
+          d
+            .slice(0, 8)
+            .map(
+              (x) =>
+                `<div class="item row"><span>${esc(x.name)} <span class="muted">${esc(x.model || '')}</span></span><span class="pill"><i class="dot ${x.status === 'ONLINE' ? '' : 'red'}"></i>${x.status === 'ONLINE' ? 'онлайн · ' + (x.battery || 0) + '%' : 'не в сети'}</span></div>`
+            )
+            .join('') || '<div class="empty">Устройств пока нет</div>'
+        }</div>`;
+    } else if (k === 'clips') {
+      const c = await api('/clips');
+      const week = c.filter((x) => Date.now() - new Date(x.created_at).getTime() < 7 * 864e5).length;
+      const st = cnt(c, (x) => x.status || '—');
+      html =
+        `<div class="dd-grid">${num('В библиотеке', c.length)}${num('Добавлено за 7 дней', week)}${Object.entries(
+          st
+        )
+          .map(([s2, v]) => num(esc(s2), v))
+          .join('')}</div>` +
+        `<div class="list">${
+          c
+            .slice(0, 8)
+            .map(
+              (x) =>
+                `<div class="item row"><span>${esc(x.title)}</span><span class="muted">${when(x.created_at)}</span></div>`
+            )
+            .join('') || '<div class="empty">Клипов пока нет</div>'
+        }</div>`;
+    } else {
+      const r = await api('/analytics/v2?days=30');
+      const t = r.totals || {};
+      html =
+        `<div class="dd-grid">${num('Просмотры', n(t.views), 'за 30 дней')}${num('Лайки', n(t.likes))}${num('Комментарии', n(t.comments))}${num('Подписчики', n(t.followers))}</div>` +
+        `<div class="list">${
+          (r.accounts || [])
+            .slice(0, 8)
+            .map(
+              (x) =>
+                `<div class="item row"><span>${esc(x.username || '—')}</span><span class="muted">${n(x.views)} просмотров · ${x.followers == null ? '—' : n(x.followers)} подписчиков</span></div>`
+            )
+            .join('') || '<div class="empty">Статистики пока нет</div>'
+        }</div>`;
+    }
+  } catch (e) {
+    html = `<div class="ws-err">${esc(e.message)}</div>`;
+  }
+  if (!document.getElementById('dashDetail')) return;
+  const go = { accounts: 'accounts', devices: 'devices', clips: 'content', views: 'analytics' }[k];
+  box.innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><b>${DASH_TITLES[k]}</b><button class="btn secondary" onclick="goPage('${go}')">Открыть раздел</button></div>${html}</div>`;
+}
+document.addEventListener('click', (e) => {
+  const t = e.target.closest && e.target.closest('.dash-tiles > [data-tile]');
+  if (t) dashPick(t.dataset.tile);
+});
+document.addEventListener('keydown', (e) => {
+  const t = e.target.closest && e.target.closest('.dash-tiles > [data-tile]');
+  if (t && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    dashPick(t.dataset.tile);
+  }
+});
 async function accounts() {
   let a = await api('/accounts');
   shell(
@@ -580,10 +722,7 @@ function showAppError(error) {
   retry.textContent = 'Повторить';
   retry.onclick = () => {
     box.remove();
-    const name = document.querySelector('nav .nav-item.active')?.dataset.page || 'dashboard';
-    Promise.resolve(
-      { dashboard, content, accounts, devices, publishing, tasks, analytics, registration }[name]()
-    ).catch(showAppError);
+    Promise.resolve(goPage(window.FX_CURRENT_PAGE || 'dashboard')).catch(showAppError);
   };
   box.append(retry);
 }

@@ -364,6 +364,7 @@ def static_files(name):
         "admin.js",
         "antiban.js",
         "monitor.js",
+        "nav.js",
     }:
         return jsonify(error="not found"), 404
     return send_from_directory(BASE, name)
@@ -530,6 +531,75 @@ def complete_device_job(did, jid):
     audit(c, "complete", "device_job", jid, {"status": status})
     c.commit()
     return jsonify(ok=True, status=status)
+
+
+@app.delete("/api/devices/<did>")
+def device_delete(did):
+    """Remove a device from the account. Running work is never silently lost: without ?force=1 the
+    request is refused while a publication or warm-up session is in progress; with force those
+    publications go to NEEDS_REVIEW (same as revoking the device). Accounts/personas/proxies stay,
+    they are only unbound from the deleted phone."""
+    c = conn()
+    row = c.execute("select id,name from devices where id=?", (did,)).fetchone()
+    if not row:
+        return jsonify(error="Устройство не найдено"), 404
+    running = c.execute(
+        "select count(*) from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING')", (did,)
+    ).fetchone()[0]
+    running += c.execute(
+        "select count(*) from device_jobs where device_id=? and status='RUNNING'", (did,)
+    ).fetchone()[0]
+    running += c.execute(
+        "select count(*) from ws_tasks where device_id=? and status='running'", (did,)
+    ).fetchone()[0]
+    if running and request.args.get("force") != "1":
+        return jsonify(
+            error="На устройстве сейчас идёт публикация или прогрев. Дождитесь окончания или удалите принудительно.",
+            running=running,
+        ), 409
+    reason = "Устройство удалено"
+    c.execute(
+        "update publications set status='NEEDS_REVIEW',error=? where id in "
+        "(select publication_id from ui_jobs where device_id=? and status in ('RUNNING','VERIFYING','QUEUED'))",
+        (reason, did),
+    )
+    c.execute(
+        "update ui_jobs set status='NEEDS_REVIEW',lease_hash=null,error=? where device_id=? and status in ('RUNNING','VERIFYING')",
+        (reason, did),
+    )
+    c.execute(
+        "update ui_jobs set status='CANCELLED',error=? where device_id=? and status='QUEUED'", (reason, did)
+    )
+    for j in c.execute(
+        "select payload from device_jobs where device_id=? and kind='PUBLISH' and status in ('QUEUED','RUNNING')",
+        (did,),
+    ).fetchall():
+        try:
+            pid = json.loads(j["payload"]).get("publication_id")
+        except (TypeError, ValueError):
+            pid = None
+        if pid:
+            c.execute("update publications set status='NEEDS_REVIEW',error=? where id=?", (reason, pid))
+    c.execute("delete from device_jobs where device_id=?", (did,))
+    c.execute(
+        "update ws_tasks set status='cancelled' where device_id=? and status in ('scheduled','running')",
+        (did,),
+    )
+    c.execute("update accounts set device_id=null where device_id=?", (did,))
+    c.execute("update ws_personas set device_id=null where device_id=?", (did,))
+    c.execute("update ws_proxies set device_id=null where device_id=?", (did,))
+    c.execute("delete from ws_device_profiles where device_id=?", (did,))
+    c.execute("delete from ui_phone_pairs where device_id=?", (did,))
+    c.execute("delete from devices where id=?", (did,))
+    audit(c, "delete", "device", did, {"name": row["name"]})
+    c.commit()
+    try:
+        import tenancy
+
+        tenancy.unregister("device", did)
+    except Exception:
+        pass
+    return jsonify(ok=True)
 
 
 @app.route("/api/accounts", methods=["GET", "POST"])
@@ -884,6 +954,9 @@ register_render(app, conn, now, audit, UPLOAD)
 from warmup import register_warmup
 
 register_warmup(app, conn, now, audit)
+from agents import register_agents  # noqa: E402
+
+register_agents(app, conn, now, audit)
 from analytics import register_analytics
 
 register_analytics(app, conn, now, audit)

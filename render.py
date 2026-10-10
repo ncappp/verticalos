@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS ws_recipe_texts(id TEXT PRIMARY KEY,recipe_id TEXT NO
 CREATE TABLE IF NOT EXISTS ws_render_jobs(id TEXT PRIMARY KEY,recipe_id TEXT,batch_id TEXT,kind TEXT DEFAULT 'render',status TEXT DEFAULT 'queued',
   payload TEXT,result TEXT,error TEXT,clip_id TEXT,account_id TEXT,post_id TEXT,lease_until REAL,attempts INTEGER DEFAULT 0,
   created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT);
+CREATE TABLE IF NOT EXISTS ws_banners(id TEXT PRIMARY KEY,name TEXT,mime TEXT,sha256 TEXT,size INTEGER,data BLOB,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ws_recipe_banners(recipe_id TEXT PRIMARY KEY,config TEXT);
 CREATE TABLE IF NOT EXISTS ws_sources(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,recipe_id TEXT NOT NULL,weight INTEGER DEFAULT 1,active INTEGER DEFAULT 1,
   start_per_day INTEGER DEFAULT 1,target_per_day INTEGER DEFAULT 3,ramp_days INTEGER DEFAULT 7,created_at TEXT NOT NULL,UNIQUE(account_id,recipe_id));
 """
@@ -100,6 +102,54 @@ def clean_plate(x):
         padding=_num(x['padding'], 0, 120, 36),
         radius=_num(x['radius'], 0, 80, 28),
     )
+
+
+BANNER_POS = (
+    'top-left',
+    'top',
+    'top-right',
+    'left',
+    'center',
+    'right',
+    'bottom-left',
+    'bottom',
+    'bottom-right',
+)
+BANNER_MAX = 3 * 1024 * 1024
+
+
+def banner_mime(data):
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if data[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+
+def clean_banners(x, known):
+    """Banner overlays of a recipe: up to 3 images with position, size, opacity, margins and time."""
+    out = []
+    for b in (x or [])[:3]:
+        if not isinstance(b, dict) or b.get('banner_id') not in known:
+            continue
+        start = _num(b.get('start'), 0, 600, 0, float)
+        end = _num(b.get('end'), 0, 600, 0, float)
+        out.append(
+            dict(
+                banner_id=b['banner_id'],
+                enabled=bool(b.get('enabled', True)),
+                position=b.get('position') if b.get('position') in BANNER_POS else 'bottom',
+                width_pct=_num(b.get('width_pct'), 5, 100, 40),
+                opacity=_num(b.get('opacity'), 5, 100, 100),
+                margin_x=_num(b.get('margin_x'), 0, 500, 40),
+                margin_y=_num(b.get('margin_y'), 0, 900, 120),
+                start=start,
+                end=end if end > start else 0,
+            )
+        )
+    return out
 
 
 def clean_audio(x):
@@ -226,7 +276,25 @@ def register_render(app, conn, now, audit, uploads):
         r['sources'] = c.execute(
             'select count(*) from ws_sources where recipe_id=? and active=1', (r['id'],)
         ).fetchone()[0]
+        r['banners'] = recipe_banners(c, r['id'])
         return r
+
+    def recipe_banners(c, rid):
+        row = c.execute('select config from ws_recipe_banners where recipe_id=?', (rid,)).fetchone()
+        try:
+            return json.loads(row['config']) if row and row['config'] else []
+        except ValueError:
+            return []
+
+    def banner_ids(c):
+        return {r['id'] for r in c.execute('select id from ws_banners')}
+
+    def save_banners(c, rid, cfg):
+        c.execute('delete from ws_recipe_banners where recipe_id=?', (rid,))
+        c.execute(
+            'insert into ws_recipe_banners(recipe_id,config) values(?,?)',
+            (rid, json.dumps(cfg, ensure_ascii=False)),
+        )
 
     def recipe_payload(x, old=None):
         old = old or {}
@@ -313,6 +381,102 @@ def register_render(app, conn, now, audit, uploads):
             return None
         return random.choices(cands, weights=[max(1, s['weight']) for s in cands])[0]['account_id']
 
+    def job_banners(c, rid):
+        out = []
+        for b in recipe_banners(c, rid):
+            if not b.get('enabled', True):
+                continue
+            row = c.execute('select sha256 from ws_banners where id=?', (b['banner_id'],)).fetchone()
+            if row:
+                out.append({**b, 'sha256': row['sha256']})
+        return out
+
+    # ---------- banner library (images overlaid on rendered videos) ----------
+    @app.route('/api/banners', methods=['GET', 'POST'])
+    def banners():
+        with conn() as c:
+            if request.method == 'GET':
+                rows = [
+                    dict(r)
+                    for r in c.execute(
+                        'select id,name,mime,size,created_at from ws_banners order by created_at desc'
+                    )
+                ]
+                used = {}
+                for r in c.execute('select recipe_id,config from ws_recipe_banners'):
+                    try:
+                        for b in json.loads(r['config'] or '[]'):
+                            used[b.get('banner_id')] = used.get(b.get('banner_id'), 0) + 1
+                    except ValueError:
+                        pass
+                for r in rows:
+                    r['recipes'] = used.get(r['id'], 0)
+                return jsonify(rows)
+            f = request.files.get('file')
+            if not f:
+                return err('Выберите картинку баннера')
+            data = f.read(BANNER_MAX + 1)
+            if len(data) > BANNER_MAX:
+                return err('Баннер больше 3 МБ — уменьшите картинку')
+            mime = banner_mime(data)
+            if not mime:
+                return err('Нужна картинка PNG, JPG или WEBP (лучше PNG с прозрачным фоном)')
+            if c.execute('select count(*) from ws_banners').fetchone()[0] >= 30:
+                return err('Не больше 30 баннеров — удалите лишние')
+            bid = str(uuid.uuid4())
+            name = (request.form.get('name') or f.filename or 'Баннер').strip()[:80]
+            c.execute(
+                'insert into ws_banners(id,name,mime,sha256,size,data,created_at) values(?,?,?,?,?,?,?)',
+                (bid, name, mime, hashlib.sha256(data).hexdigest(), len(data), data, now()),
+            )
+            audit(c, 'create', 'banner', bid, {'name': name})
+            return jsonify(id=bid, name=name)
+
+    def banner_file(bid):
+        with conn() as c:
+            r = c.execute('select mime,data from ws_banners where id=?', (bid,)).fetchone()
+        if not r:
+            return err('Баннер не найден', 404)
+        from flask import Response
+
+        return Response(
+            bytes(r['data']), mimetype=r['mime'], headers={'Cache-Control': 'private, max-age=3600'}
+        )
+
+    @app.get('/api/banners/<bid>/file')
+    def banner_get(bid):
+        return banner_file(bid)
+
+    @app.get('/api/bridge/banners/<bid>')
+    def bridge_banner_get(bid):
+        return banner_file(bid)
+
+    @app.route('/api/banners/<bid>', methods=['PATCH', 'DELETE'])
+    def banner_one(bid):
+        with conn() as c:
+            if not c.execute('select 1 from ws_banners where id=?', (bid,)).fetchone():
+                return err('Баннер не найден', 404)
+            if request.method == 'PATCH':
+                name = str(body().get('name') or '').strip()[:80]
+                if not name:
+                    return err('Укажите название')
+                c.execute('update ws_banners set name=? where id=?', (name, bid))
+                return jsonify(ok=True)
+            for r in c.execute('select recipe_id,config from ws_recipe_banners').fetchall():
+                try:
+                    cfg = json.loads(r['config'] or '[]')
+                except ValueError:
+                    cfg = []
+                keep = [b for b in cfg if b.get('banner_id') != bid]
+                if len(keep) != len(cfg):
+                    c.execute(
+                        'update ws_recipe_banners set config=? where recipe_id=?',
+                        (json.dumps(keep, ensure_ascii=False), r['recipe_id']),
+                    )
+            c.execute('delete from ws_banners where id=?', (bid,))
+            audit(c, 'delete', 'banner', bid, {})
+            return jsonify(ok=True)
+
     def make_job(c, r, batch=None, account=None):
         r = dict(r)
         t = pick_text(c, r)
@@ -327,6 +491,7 @@ def register_render(app, conn, now, audit, uploads):
             audio=json.loads(r['audio']),
             timing=json.loads(r['timing']),
             video=dict(w=1080, h=1920, fps=30),
+            banners=job_banners(c, r['id']),
         )
         meta = dict(
             title=(t or {}).get('title') or r['name'],
@@ -384,6 +549,8 @@ def register_render(app, conn, now, audit, uploads):
             except Bad as e:
                 return err(str(e))
             rid = str(uuid.uuid4())
+            if 'banners' in body():
+                save_banners(c, rid, clean_banners(body()['banners'], banner_ids(c)))
             nxt = time.time() + 60 if d['period_hours'] else None
             c.execute(
                 'insert into ws_recipes(id,name,enabled,source_type,source_url,scenes,text_style,plate,audio,timing,text_mode,period_hours,next_run_at,auto_publish,rights_confirmed,caption_template,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -436,7 +603,7 @@ def register_render(app, conn, now, audit, uploads):
                     "update ws_render_jobs set status='canceled' where recipe_id=? and status='queued'",
                     (rid,),
                 )
-                for t in ('ws_recipe_texts', 'ws_sources'):
+                for t in ('ws_recipe_texts', 'ws_sources', 'ws_recipe_banners'):
                     c.execute(f'delete from {t} where recipe_id=?', (rid,))
                 c.execute('delete from ws_recipes where id=?', (rid,))
                 audit(c, 'delete', 'recipe', rid, {})
@@ -446,6 +613,8 @@ def register_render(app, conn, now, audit, uploads):
                 d = recipe_payload(body(), old)
             except Bad as e:
                 return err(str(e))
+            if 'banners' in body():
+                save_banners(c, rid, clean_banners(body()['banners'], banner_ids(c)))
             nxt = r['next_run_at']
             if d['period_hours'] != r['period_hours'] or (d['enabled'] and not r['enabled']):
                 nxt = time.time() + 60 if d['period_hours'] else None
@@ -792,6 +961,19 @@ def register_render(app, conn, now, audit, uploads):
                 "select * from ws_render_jobs where status='queued' order by case kind when 'scan' then 0 else 1 end,created_at limit 1"
             ).fetchone()
             if not j:
+                return jsonify(job=None)
+            if str(info.get('version') or '') == 'RENDER_AGENT_V1' and (
+                json.loads(j['payload'] or '{}').get('banners')
+            ):
+                # The old Mac agent cannot draw banners: do not render the video without them silently.
+                c.execute(
+                    "update ws_render_jobs set status='failed',error=?,finished_at=? where id=?",
+                    (
+                        'Для баннеров обновите склейку на Mac: «Склейка» → «Установить на Mac» (команда та же).',
+                        now(),
+                        j['id'],
+                    ),
+                )
                 return jsonify(job=None)
             c.execute(
                 "update ws_render_jobs set status='running',attempts=attempts+1,lease_until=?,started_at=? where id=?",

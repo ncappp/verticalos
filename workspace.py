@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS ws_account_profiles(
   account_id TEXT PRIMARY KEY,persona_id TEXT,login_method TEXT DEFAULT 'username',work_mode TEXT DEFAULT 'young',
   status TEXT DEFAULT 'login',notes TEXT,search_keywords TEXT,channel_name TEXT,successful_sessions INTEGER DEFAULT 0,updated_at TEXT);
 CREATE TABLE IF NOT EXISTS ws_device_profiles(device_id TEXT PRIMARY KEY,locale TEXT,timezone TEXT,updated_at TEXT);
+CREATE TABLE IF NOT EXISTS ws_agent_tasks(id TEXT PRIMARY KEY,persona_id TEXT NOT NULL,kind TEXT NOT NULL,value TEXT,target INTEGER,period TEXT DEFAULT 'total',status TEXT DEFAULT 'active',created_at TEXT NOT NULL);
 """
 
 
@@ -280,7 +281,7 @@ def register_workspace(app, conn, now, audit):
         if c.execute(
             "select 1 from ws_personas where device_id=? and id!=? and status!='archived'", (did, pid or '')
         ).fetchone():
-            raise Bad('На этом устройстве уже есть персона. Разрешена одна персона на одно устройство')
+            raise Bad('На этом устройстве уже есть агент. Разрешён один агент на одно устройство')
         dob = _s(x, 'date_of_birth', 10)
         if dob:
             try:
@@ -360,13 +361,14 @@ def register_workspace(app, conn, now, audit):
         c = conn()
         r = c.execute("select * from ws_personas where id=?", (pid,)).fetchone()
         if not r:
-            return err('Персона не найдена', 404)
+            return err('Агент не найден', 404)
         if request.method == 'GET':
             return jsonify(persona_full(c, r))
         if request.method == 'DELETE':
             c.execute("update ws_account_profiles set persona_id=null where persona_id=?", (pid,))
             c.execute("delete from ws_persona_interests where persona_id=?", (pid,))
             c.execute("delete from ws_persona_times where persona_id=?", (pid,))
+            c.execute("delete from ws_agent_tasks where persona_id=?", (pid,))
             c.execute("delete from ws_personas where id=?", (pid,))
             audit(c, 'delete', 'persona', pid)
             c.commit()
@@ -410,7 +412,7 @@ def register_workspace(app, conn, now, audit):
         x = request.json or {}
         pid = x.get('persona_id') or None
         if pid and not c.execute("select 1 from ws_personas where id=?", (pid,)).fetchone():
-            return err('Персона не найдена')
+            return err('Агент не найден')
         kw = _s(x, 'search_keywords', 2000)
         if not kw:
             return err('Укажите ключевые слова для поиска через запятую')

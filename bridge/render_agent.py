@@ -8,7 +8,7 @@ from pathlib import Path
 import requests
 
 SERVER = os.getenv('FAXCLIP_RENDER_SERVER', 'https://verticalos-rxdl.onrender.com')
-VERSION = 'RENDER_AGENT_V1'
+VERSION = 'RENDER_AGENT_V2'
 VIDEO_EXT = ('.mp4', '.mov', '.m4v', '.webm', '.mkv')
 AUDIO_EXT = ('.mp3', '.m4a', '.aac', '.wav', '.ogg')
 FONT_FILES = {
@@ -227,7 +227,42 @@ def plate_png(text, st, pl, w, h, out):
     img.save(out)
 
 
-def render(job, ff, cache, renew):
+def banner_xy(pos, mx, my):
+    """ffmpeg overlay x/y expressions for a banner position like 'bottom-right' or 'center'."""
+    v, hz = {
+        'top-left': ('top', 'left'),
+        'top': ('top', 'center'),
+        'top-right': ('top', 'right'),
+        'left': ('middle', 'left'),
+        'center': ('middle', 'center'),
+        'right': ('middle', 'right'),
+        'bottom-left': ('bottom', 'left'),
+        'bottom': ('bottom', 'center'),
+        'bottom-right': ('bottom', 'right'),
+    }.get(pos, ('bottom', 'center'))
+    x = {'left': str(int(mx)), 'center': '(W-w)/2', 'right': f'W-w-{int(mx)}'}[hz]
+    y = {'top': str(int(my)), 'middle': '(H-h)/2', 'bottom': f'H-h-{int(my)}'}[v]
+    return x, y
+
+
+def fetch_banner(b, cache, headers):
+    """Banner images are cached on the Mac by checksum; downloaded from FaxClip once."""
+    sha = re.sub(r'[^0-9a-f]', '', str(b.get('sha256', '')))[:64]
+    path = cache / 'banners' / (sha or b['banner_id'])
+    if path.exists() and sha and hashlib.sha256(path.read_bytes()).hexdigest() == sha:
+        return str(path)
+    r = requests.get(SERVER + '/api/bridge/banners/' + b['banner_id'], headers=headers or {}, timeout=60)
+    if r.status_code == 404:
+        raise Fail('Баннер удалён из FaxClip — уберите его из рецепта')
+    r.raise_for_status()
+    if sha and hashlib.sha256(r.content).hexdigest() != sha:
+        raise Fail('Баннер скачался с ошибкой, повторим позже')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(r.content)
+    return str(path)
+
+
+def render(job, ff, cache, renew, headers=None):
     p = job['payload']
     src = Source(p['source'], cache)
     W, H, FPS = p['video']['w'], p['video']['h'], p['video']['fps']
@@ -331,7 +366,22 @@ def render(job, ff, cache, renew):
         ]
         if music:
             cmd += ['-stream_loop', '-1', '-i', music]
-        fc = [f"[0:v][1:v]overlay=0:0:shortest=1:enable='between(t,{tm['text_start']},{end})'[v]"]
+        fc = [f"[0:v][1:v]overlay=0:0:shortest=1:enable='between(t,{tm['text_start']},{end})'[v0]"]
+        last = 'v0'
+        idx = 3 if music else 2
+        for k, b in enumerate(p.get('banners') or []):
+            img = fetch_banner(b, cache, headers)
+            cmd += ['-loop', '1', '-i', img]
+            bw = max(2, int(W * b['width_pct'] / 100) // 2 * 2)
+            x, y = banner_xy(b['position'], b['margin_x'], b['margin_y'])
+            b_end = b['end'] if b['end'] > b['start'] else total + 1
+            fc.append(
+                f"[{idx}:v]scale={bw}:-2,format=rgba,colorchannelmixer=aa={b['opacity'] / 100:.2f}[bn{k}];"
+                f"[{last}][bn{k}]overlay=x={x}:y={y}:shortest=1:enable='between(t,{b['start']},{b_end})'[vb{k}]"
+            )
+            last = f'vb{k}'
+            idx += 1
+        fc.append(f'[{last}]null[v]')
         ov = (a['original_volume'] / 100) if a['original'] else 0
         if music:
             fc.append(
@@ -467,7 +517,7 @@ def main():
                             pass
 
                 print('render', jid, flush=True)
-                final, used, total, tmp = render(job, ff, cache, renew)
+                final, used, total, tmp = render(job, ff, cache, renew, h)
                 try:
                     with open(final, 'rb') as f:
                         up = requests.post(

@@ -391,7 +391,7 @@ def register_warmup(app, conn, now, audit):
             a = [e for e in eligible(c) if e['account_id'] == x.get('account_id')]
             if not a:
                 return err(
-                    'Аккаунт не готов к прогреву: нужна активная персона на том же телефоне, статус «В системе» и TikTok'
+                    'Аккаунт не готов к прогреву: нужен активный агент на том же телефоне, статус «В системе» и TikTok'
                 )
             a = a[0]
             sc = c.execute(
@@ -584,7 +584,14 @@ def register_warmup(app, conn, now, audit):
                 (now(), time.time() + LEASE, t['id']),
             )
             event(c, t['id'], 'started', 'Mac начал сессию')
-            kw = [k.strip() for k in (ap['search_keywords'] or '').split(',') if k.strip()][:20]
+            kw = [k.strip() for k in (ap['search_keywords'] or '').split(',') if k.strip()]
+            # The agent also studies what the owner asked (study tasks) and its interests.
+            from agents import study_keywords
+
+            for k in study_keywords(c, t['persona_id']):
+                if k.lower() not in {x.lower() for x in kw}:
+                    kw.append(k)
+            kw = kw[:20]
             deny = [k.strip().lower() for k in (ap['denied_keywords'] or '').split(',') if k.strip()][:30]
             return jsonify(
                 task=dict(

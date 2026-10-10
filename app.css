@@ -333,7 +333,8 @@ button:disabled {
   pointer-events: none;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 30%);
 }
-.grid > .card:first-child {
+.grid:not(.dash-tiles) > .card:first-child,
+.dash-tiles > .card.on {
   background: linear-gradient(
     150deg,
     rgba(198, 255, 61, 0.2),
@@ -342,7 +343,8 @@ button:disabled {
   );
   border-color: var(--lime-line);
 }
-.grid > .card:first-child .metric {
+.grid:not(.dash-tiles) > .card:first-child .metric,
+.dash-tiles > .card.on .metric {
   color: var(--lime);
 }
 .label {
@@ -965,12 +967,14 @@ header h1 {
   height: 18px;
   opacity: 0.9;
 }
-.grid > .card:first-child .chip-ico {
+.grid:not(.dash-tiles) > .card:first-child .chip-ico,
+.dash-tiles > .card.on .chip-ico {
   background: var(--lime);
   border-color: transparent;
   box-shadow: 0 8px 20px -8px rgba(198, 255, 61, 0.8);
 }
-.grid > .card:first-child .chip-ico .ico {
+.grid:not(.dash-tiles) > .card:first-child .chip-ico .ico,
+.dash-tiles > .card.on .chip-ico .ico {
   stroke: var(--lime-ink);
 }
 .spark {
@@ -991,13 +995,15 @@ header h1 {
   fill: url(#none);
   fill: rgba(255, 255, 255, 0.04);
 }
-.grid > .card:first-child .spark-line,
-.grid > .card:nth-child(4) .spark-line {
+.grid:not(.dash-tiles) > .card:first-child .spark-line,
+.grid:not(.dash-tiles) > .card:nth-child(4) .spark-line,
+.dash-tiles > .card.on .spark-line {
   stroke: var(--lime);
   filter: drop-shadow(0 0 4px rgba(198, 255, 61, 0.7));
 }
-.grid > .card:first-child .spark-fill,
-.grid > .card:nth-child(4) .spark-fill {
+.grid:not(.dash-tiles) > .card:first-child .spark-fill,
+.grid:not(.dash-tiles) > .card:nth-child(4) .spark-fill,
+.dash-tiles > .card.on .spark-fill {
   fill: rgba(198, 255, 61, 0.08);
 }
 
@@ -2387,5 +2393,182 @@ input[type='checkbox'] {
   }
   aside nav .nav-item {
     min-height: 42px;
+  }
+}
+
+/* dashboard: clickable tiles + detail panel; sub-navigation */
+.dash-tiles > .card {
+  cursor: pointer;
+  transition:
+    transform 0.15s,
+    border-color 0.15s;
+}
+.dash-tiles > .card:hover {
+  transform: translateY(-2px);
+}
+.dash-tiles > .card:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.dash-detail {
+  margin-top: 14px;
+}
+.dash-detail .dd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+.dash-detail .dd-num {
+  font-size: 22px;
+  font-weight: 800;
+}
+.subnav {
+  margin: 0 0 14px;
+}
+
+/* Dashboard tiles: clickable, the selected one is highlighted, details below */
+.dash-tiles > [data-tile] {
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease;
+}
+.dash-tiles > [data-tile]:hover {
+  transform: translateY(-2px);
+}
+.dash-tiles > [data-tile]:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.dash-detail {
+  margin-top: 14px;
+}
+.dash-detail:empty {
+  display: none;
+}
+.dd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.dd-num {
+  font-size: 26px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+/* Sub-sections of a navigation group */
+.subnav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+/* Agents */
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.agent-prog {
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.agent-prog i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--lime2), var(--lime));
+}
+.agent-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 90px;
+  margin-top: 8px;
+}
+.agent-bars > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  height: 100%;
+}
+.agent-bars i {
+  display: block;
+  width: 100%;
+  max-width: 18px;
+  border-radius: 4px 4px 0 0;
+  background: var(--lime);
+}
+.agent-bars small {
+  font-size: 10px;
+  opacity: 0.6;
+}
+.scr-setup {
+  margin: 10px 0;
+}
+/* Assembly: explainer + banners */
+.as-how ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  line-height: 1.55;
+}
+.as-how {
+  margin-bottom: 12px;
+}
+.banner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.banner-thumb {
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: repeating-conic-gradient(rgba(255, 255, 255, 0.06) 0 25%, transparent 0 50%) 0 0 / 16px 16px;
+}
+.banner-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.as-bwrap {
+  display: grid;
+  grid-template-columns: 1fr 170px;
+  gap: 12px;
+  align-items: start;
+}
+.as-brow {
+  margin-bottom: 8px;
+  padding: 12px;
+}
+.as-bprev {
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(160deg, #2a3140, #10131a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.as-bprev img {
+  position: absolute;
+}
+@media (max-width: 600px) {
+  .as-bwrap {
+    grid-template-columns: 1fr;
+  }
+  .as-bprev {
+    width: 160px;
+    margin: 0 auto;
   }
 }

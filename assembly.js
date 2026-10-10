@@ -17,7 +17,31 @@
     'Trebuchet MS Bold',
     'Courier New Bold'
   ];
-  const A = { tab: 'recipes' };
+  const A = { tab: 'recipes', bimg: {} };
+  const BPOS = {
+    'top-left': 'Сверху слева',
+    top: 'Сверху по центру',
+    'top-right': 'Сверху справа',
+    left: 'Слева по центру',
+    center: 'По центру',
+    right: 'Справа по центру',
+    'bottom-left': 'Снизу слева',
+    bottom: 'Снизу по центру',
+    'bottom-right': 'Снизу справа'
+  };
+  /* Banner images need the Telegram auth header, so they are loaded as blobs. */
+  async function bannerSrc(id) {
+    if (A.bimg[id]) return A.bimg[id];
+    const r = await fetch('/api/banners/' + id + '/file', { headers: authHeaders({}) });
+    if (!r.ok) return '';
+    return (A.bimg[id] = URL.createObjectURL(await r.blob()));
+  }
+  function fillBannerImgs(root = document) {
+    root.querySelectorAll('img[data-banner]').forEach(async (img) => {
+      const u = await bannerSrc(img.dataset.banner);
+      if (u) img.src = u;
+    });
+  }
   const fmt = (t) =>
     t
       ? new Date(typeof t === 'number' ? t * 1000 : t).toLocaleString('ru-RU', {
@@ -46,11 +70,12 @@
   const opt = (val, l, cur) =>
     `<option value="${esc(val)}" ${String(val) === String(cur) ? 'selected' : ''}>${esc(l)}</option>`;
   async function page() {
-    const [rs, jobs, src, acc] = await Promise.all([
+    const [rs, jobs, src, acc, bn] = await Promise.all([
       api('/recipes'),
       api('/render-jobs'),
       api('/sources'),
-      api('/accounts')
+      api('/accounts'),
+      api('/banners').catch(() => [])
     ]);
     const agent = jobs.agent_online
       ? `<span class="pill"><i class="dot"></i>Mac на связи</span>`
@@ -58,7 +83,8 @@
     const tabs = [
       ['recipes', 'Рецепты ' + rs.length],
       ['jobs', 'Задачи ' + jobs.items.length],
-      ['sources', 'Источники ' + src.length]
+      ['sources', 'Источники ' + src.length],
+      ['banners', 'Баннеры ' + bn.length]
     ];
     let html = '';
     if (A.tab === 'recipes')
@@ -80,18 +106,72 @@
     if (A.tab === 'sources')
       html = `<p class="muted">Источник — какой аккаунт получает ролики из какого рецепта. Вес делит ролики между аккаунтами. Наращивание: в первый день «старт» роликов, затем каждый день больше, пока не дойдёт до «цели».</p>
   <table class="table"><thead><tr><th>Аккаунт</th><th>Рецепт</th><th>Вес</th><th>Сегодня</th><th>Наращивание</th><th>Активен</th><th></th></tr></thead><tbody>${src.map((s) => `<tr><td><b>${esc(s.username || '—')}</b><br><span class="muted">${esc(s.platform || '')}</span></td><td>${esc(s.recipe || '—')}</td><td>${s.weight}</td><td>${s.today} из ${s.quota}</td><td class="muted">${s.start_per_day} → ${s.target_per_day} в день за ${s.ramp_days} дн.</td><td>${s.active ? 'Да' : 'Нет'}</td><td><button class="btn secondary" onclick="asSrcForm('${s.id}')">Изменить</button> <button class="btn secondary" onclick="asSrcDel('${s.id}')">Удалить</button></td></tr>`).join('') || '<tr><td colspan="7" class="empty">Источников пока нет</td></tr>'}</tbody></table>`;
+    if (A.tab === 'banners')
+      html = `<p class="muted">Баннер — картинка, которую Mac сам накладывает на каждый собранный ролик: логотип, ссылка, призыв подписаться. Лучше PNG с прозрачным фоном, до 3 МБ. Загрузите баннер здесь, затем откройте рецепт → вкладка «Баннеры» и выберите место, размер, прозрачность и время показа.</p>
+  <div class="form" style="margin:12px 0"><div class="formgrid"><label>Картинка (PNG, JPG, WEBP)<input id="bnF" type="file" accept="image/png,image/jpeg,image/webp"></label><label>Название<input id="bnN" placeholder="Логотип, Подпишись…"></label></div>${errBox}<button class="btn" id="bnUp" onclick="asBannerUpload()">Загрузить баннер</button></div>
+  <div class="banner-grid">${
+    bn
+      .map(
+        (b) =>
+          `<div class="item banner-item"><div class="banner-thumb"><img data-banner="${b.id}" alt=""></div><b>${esc(b.name)}</b><div class="muted">${Math.max(1, Math.round(b.size / 1024))} КБ · в рецептах: ${b.recipes}</div><div class="row" style="gap:6px;justify-content:flex-start"><button class="btn secondary" onclick="asBannerRename('${b.id}')">Переименовать</button><button class="btn secondary" onclick="asBannerDel('${b.id}',${b.recipes})">Удалить</button></div></div>`
+      )
+      .join('') || '<div class="empty">Баннеров пока нет</div>'
+  }</div>`;
     const action =
       A.tab === 'sources'
         ? `<button class="btn" onclick="asSrcForm()">+ Источник</button>`
-        : `<button class="btn" onclick="asForm()">+ Рецепт</button>`;
+        : A.tab === 'banners'
+          ? ''
+          : `<button class="btn" onclick="asForm()">+ Рецепт</button>`;
+    const how = `<div class="card as-how"><b>Как работает склейка</b><ol><li><b>Рецепт</b> — шаблон ролика: из каких папок брать сцены (intro → main → outro), какой текст, плашку, музыку и баннеры наложить.</li><li><b>Mac склеивает</b>: берёт случайный дубль из каждой папки, монтирует вертикальное видео 1080×1920 и загружает его в FaxClip (бесплатный сервер монтаж не тянет).</li><li><b>Готовый ролик</b> попадает в «Медиатеку» или сразу публикуется на аккаунты из вкладки «Источники».</li></ol></div>`;
     shell(
       'Склейка',
       'Автомонтаж роликов из ваших дублей',
-      `<div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div class="tabs ws-tabs" style="margin:0">${tabs.map(([k, l]) => `<button class="${A.tab === k ? 'active' : ''}" onclick="asTab('${k}')">${l}</button>`).join('')}</div><div class="row" style="gap:8px">${agent}<button class="btn secondary" onclick="asInstall()">Установить склейку на Mac</button></div></div>
+      `${how}<div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div class="tabs ws-tabs" style="margin:0">${tabs.map(([k, l]) => `<button class="${A.tab === k ? 'active' : ''}" onclick="asTab('${k}')">${l}</button>`).join('')}</div><div class="row" style="gap:8px">${agent}<button class="btn secondary" onclick="asInstall()">Установить склейку на Mac</button></div></div>
  <div class="card ws-posts">${html}</div>`,
       action
     );
+    fillBannerImgs();
   }
+  window.asBannerUpload = async () => {
+    const f = document.getElementById('bnF').files[0];
+    if (!f) return fail(new Error('Выберите картинку'));
+    const btn = document.getElementById('bnUp');
+    btn.disabled = true;
+    btn.textContent = 'Загрузка…';
+    try {
+      await localLogin;
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('name', v('bnN') || f.name.replace(/\.[^.]+$/, ''));
+      const r = await fetch('/api/banners', { method: 'POST', body: fd, headers: authHeaders({}) });
+      const x = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(x.error || 'HTTP ' + r.status);
+      A.tab = 'banners';
+      await page();
+    } catch (e) {
+      fail(e);
+      btn.disabled = false;
+      btn.textContent = 'Загрузить баннер';
+    }
+  };
+  window.asBannerRename = async (id) => {
+    const name = prompt('Новое название баннера');
+    if (!name) return;
+    await api('/banners/' + id, { method: 'PATCH', body: JSON.stringify({ name }) }).catch(showAppError);
+    await page();
+  };
+  window.asBannerDel = async (id, used) => {
+    if (
+      !confirm(
+        used ? `Баннер используется в рецептах (${used}). Удалить и убрать его из них?` : 'Удалить баннер?'
+      )
+    )
+      return;
+    await api('/banners/' + id, { method: 'DELETE' }).catch(showAppError);
+    delete A.bimg[id];
+    await page();
+  };
   window.asTab = (t) => {
     A.tab = t;
     page().catch(showAppError);
@@ -188,6 +268,35 @@
           texts: []
         };
     cur = r;
+    const bl = await api('/banners').catch(() => []);
+    const rb = [...(r.banners || [])];
+    while (rb.length < 3)
+      rb.push({
+        banner_id: '',
+        position: 'bottom',
+        width_pct: 40,
+        opacity: 100,
+        margin_x: 40,
+        margin_y: 120,
+        start: 0,
+        end: 0,
+        enabled: true
+      });
+    const bRow = (
+      b,
+      k
+    ) => `<div class="card as-brow" data-brow="${k}"><div class="formgrid"><label>Баннер ${k + 1}<select id="bI${k}" onchange="asBPrev()"><option value="">— не накладывать —</option>${bl.map((x) => opt(x.id, x.name, b.banner_id)).join('')}</select></label><label>Где<select id="bP${k}" onchange="asBPrev()">${Object.entries(
+      BPOS
+    )
+      .map(([pk, pl]) => opt(pk, pl, b.position))
+      .join('')}</select></label></div>
+  <div class="formgrid"><label>Ширина, % от кадра<input id="bW${k}" type="number" min="5" max="100" value="${b.width_pct}" oninput="asBPrev()"></label><label>Непрозрачность, %<input id="bO${k}" type="number" min="5" max="100" value="${b.opacity}" oninput="asBPrev()"></label></div>
+  <div class="formgrid"><label>Отступ от края по горизонтали, px<input id="bX${k}" type="number" min="0" max="500" value="${b.margin_x}" oninput="asBPrev()"></label><label>Отступ от края по вертикали, px<input id="bY${k}" type="number" min="0" max="900" value="${b.margin_y}" oninput="asBPrev()"></label></div>
+  <div class="formgrid"><label>Показать с секунды<input id="bS${k}" type="number" step="0.5" min="0" value="${b.start}"></label><label>Убрать на секунде (0 — до конца)<input id="bE${k}" type="number" step="0.5" min="0" value="${b.end}"></label></div>
+  <label class="ws-check"><input id="bOn${k}" type="checkbox" ${b.enabled !== false ? 'checked' : ''} onchange="asBPrev()"> Включён</label></div>`;
+    const bSec = bl.length
+      ? `<p class="muted">Mac наложит выбранные картинки на каждый ролик этого рецепта. Справа — примерный вид кадра 9:16.</p><div class="as-bwrap"><div>${rb.slice(0, 3).map(bRow).join('')}</div><div class="as-bprev" id="bPrev"></div></div>`
+      : `<p class="muted">Сначала загрузите картинки во вкладке «Склейка» → «Баннеры», потом выберите их здесь.</p>`;
     const t = {
       font: 'Arial Bold',
       size: 64,
@@ -213,7 +322,7 @@
     const tm = { text_start: 0, text_end: 0, max_total: 60, ...r.timing };
     const sec = (k, l) =>
       `<button type="button" class="${k === 'main' ? 'active' : ''}" data-as="${k}" onclick="asSec('${k}')">${l}</button>`;
-    modalBox(`<h3>${id ? 'Рецепт склейки' : 'Новый рецепт'}</h3><div class="tabs ws-tabs">${sec('main', 'Основные')}${sec('text', 'Текст')}${sec('plate', 'Плашка')}${sec('audio', 'Аудио')}${sec('timing', 'Тайминг')}${sec('texts', 'Тексты')}</div><div class="form">
+    modalBox(`<h3>${id ? 'Рецепт склейки' : 'Новый рецепт'}</h3><div class="tabs ws-tabs">${sec('main', 'Основные')}${sec('text', 'Текст')}${sec('plate', 'Плашка')}${sec('audio', 'Аудио')}${sec('timing', 'Тайминг')}${sec('banners', 'Баннеры')}${sec('texts', 'Тексты')}</div><div class="form">
  <div data-sec="main"><label>Название<input id="rN" value="${esc(r.name)}" placeholder="Обзоры авто"></label>
   <div class="formgrid"><label>Где лежат дубли<select id="rST" onchange="asSrcHint()">${opt('local', 'Папка на Mac', r.source_type)}${opt('yandex', 'Яндекс.Диск (публичная ссылка)', r.source_type)}</select></label><label id="rSUl">Путь<input id="rSU" value="${esc(r.source_url || '')}"></label></div><p class="muted" id="rSH"></p>
   <b>Сцены по порядку</b><p class="muted">Одна строка — одна сцена: имя папки и максимум секунд (0 — целиком). В каждой папке 3–5 дублей, Mac берёт случайный.</p><textarea id="rSc" rows="5" placeholder="intro 3&#10;main 0&#10;outro 3">${esc((r.scenes || []).map((s) => s.folder + ' ' + (s.max_sec || 0)).join('\n'))}</textarea>
@@ -235,12 +344,60 @@
   <label>Папка с музыкой (необязательно)<input id="aM" value="${esc(a.music_folder || '')}" placeholder="music"></label><p class="muted">Из папки берётся случайный трек (mp3, m4a, wav). Озвучка и субтитры по голосу появятся вместе с ИИ.</p></div>
  <div data-sec="timing" style="display:none"><div class="formgrid"><label>Текст появляется на секунде<input id="mS" type="number" step="0.5" min="0" value="${tm.text_start}"></label><label>Исчезает на секунде (0 — до конца)<input id="mE" type="number" step="0.5" min="0" value="${tm.text_end}"></label></div>
   <label>Максимальная длина ролика, сек.<input id="mT" type="number" min="3" max="600" value="${tm.max_total}"></label></div>
+ <div data-sec="banners" style="display:none">${bSec}</div>
  <div data-sec="texts" style="display:none"><p class="muted">Таблица: столбец A — текст на видео, B — заголовок, C — описание с хэштегами. Можно загрузить Excel/CSV или вставить строки ниже (разделитель — «|»).</p>
   <div class="formgrid"><label>Порядок<select id="xM">${opt('sequential', 'По порядку', r.text_mode)}${opt('random', 'Случайно', r.text_mode)}</select></label><label>Позиция<input disabled value="${id ? ((r.text_pos || 0) % Math.max(1, r.texts_count)) + 1 + ' из ' + r.texts_count : '—'}"></label></div>
   ${id ? `<label>Файл Excel / CSV<input id="xF" type="file" accept=".xlsx,.csv,.txt"></label><div class="row" style="justify-content:flex-start;gap:8px"><button class="btn secondary" onclick="asTextsUpload('${id}')">Загрузить файл</button><button class="btn secondary" onclick="asTextsReset('${id}')">Сбросить позицию</button></div>` : '<p class="muted">Excel можно загрузить после сохранения рецепта.</p>'}
   <label>Строки (текст | заголовок | описание)<textarea id="xT" rows="7">${esc((r.texts || []).map((x) => [x.text, x.title, x.description].filter((s, i) => s || i === 0).join(' | ')).join('\n'))}</textarea></label></div>
  ${errBox}<div class="row" style="flex-wrap:wrap;gap:8px">${id ? `<button class="btn secondary" onclick="asDel('${id}')">Удалить</button>` : ''}<button class="close" onclick="closeModal()">Отмена</button><button class="btn" id="rSave" onclick="asSave('${id || ''}')">Сохранить</button></div></div>`);
     asSrcHint();
+    asBPrev();
+  };
+  const bannersFromForm = () =>
+    [0, 1, 2]
+      .filter((k) => document.getElementById('bI' + k) && v('bI' + k))
+      .map((k) => ({
+        banner_id: v('bI' + k),
+        enabled: v('bOn' + k),
+        position: v('bP' + k),
+        width_pct: +v('bW' + k),
+        opacity: +v('bO' + k),
+        margin_x: +v('bX' + k),
+        margin_y: +v('bY' + k),
+        start: +v('bS' + k),
+        end: +v('bE' + k)
+      }));
+  /* Preview: 1080×1920 frame scaled into the box; same geometry as ffmpeg on the Mac. */
+  window.asBPrev = async () => {
+    const box = document.getElementById('bPrev');
+    if (!box) return;
+    const sc = 1 / 1080;
+    const parts = [];
+    for (const b of bannersFromForm()) {
+      if (!b.enabled) continue;
+      const u = await bannerSrc(b.banner_id);
+      const [vy, hz] = {
+        'top-left': ['top', 'left'],
+        top: ['top', 'center'],
+        'top-right': ['top', 'right'],
+        left: ['middle', 'left'],
+        center: ['middle', 'center'],
+        right: ['middle', 'right'],
+        'bottom-left': ['bottom', 'left'],
+        bottom: ['bottom', 'center'],
+        'bottom-right': ['bottom', 'right']
+      }[b.position] || ['bottom', 'center'];
+      const st = [`width:${b.width_pct}%`, `opacity:${b.opacity / 100}`];
+      if (hz === 'left') st.push(`left:${b.margin_x * sc * 100}%`);
+      if (hz === 'right') st.push(`right:${b.margin_x * sc * 100}%`);
+      if (hz === 'center')
+        st.push('left:50%', 'transform:translateX(-50%)' + (vy === 'middle' ? ' translateY(-50%)' : ''));
+      if (vy === 'top') st.push(`top:${(b.margin_y / 1920) * 100}%`);
+      if (vy === 'bottom') st.push(`bottom:${(b.margin_y / 1920) * 100}%`);
+      if (vy === 'middle') st.push('top:50%', hz === 'center' ? '' : 'transform:translateY(-50%)');
+      if (u) parts.push(`<img src="${u}" style="${st.filter(Boolean).join(';')}" alt="">`);
+    }
+    box.innerHTML = parts.join('') || '<span class="muted">Баннеры не выбраны</span>';
   };
   window.asSec = (k) => {
     document
@@ -314,6 +471,7 @@
         },
         timing: { text_start: +v('mS'), text_end: +v('mE'), max_total: +v('mT') }
       };
+      if (document.getElementById('bI0')) b.banners = bannersFromForm();
       const r = await api(id ? '/recipes/' + id : '/recipes', {
         method: id ? 'PATCH' : 'POST',
         body: JSON.stringify(b)

@@ -63,18 +63,7 @@
     try {
       const s = await api('/session');
       window.FX_SESSION = s;
-      const pages = {
-        assembly: 'assembly',
-        warmup: 'warmup',
-        analytics: 'analytics',
-        links: 'links',
-        antiban: 'antiban'
-      };
-      for (const [f, p] of Object.entries(pages)) {
-        const el = document.querySelector(`nav [data-page="${p}"]`);
-        if (el) el.hidden = s.features && s.features[f] === false;
-      }
-      if (s.is_admin) addNav('admin', 'Админка', ICON.admin, '[data-page="registration"]');
+      window.dispatchEvent(new Event('fx-session'));
       banner(s.announcement);
     } catch (e) {
       if (e.denied) deny(e.message);
